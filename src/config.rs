@@ -57,6 +57,13 @@ pub enum WindowMode {
     Fullscreen,
 }
 
+/// Configuration for paused capture mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PausedConfig {
+    pub port: u16,
+    pub slot: u32,
+}
+
 /// The per-run appendconfig. Rendered text overrides the user's config for
 /// this launch only; the user's file is never written.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,6 +71,8 @@ pub struct AppendConfig {
     pub window: WindowMode,
     /// When a `--state` file was staged, the temp savestate dir to point RetroArch at.
     pub staged_states_dir: Option<PathBuf>,
+    /// Configuration for paused capture mode.
+    pub paused: Option<PausedConfig>,
 }
 
 impl AppendConfig {
@@ -106,6 +115,11 @@ impl AppendConfig {
             lines.push(("sort_savestates_enable", "false".into()));
             lines.push(("sort_savestates_by_content_enable", "false".into()));
             lines.push(("savestates_in_content_dir", "false".into()));
+        }
+        if let Some(paused) = &self.paused {
+            lines.push(("network_cmd_enable", "true".into()));
+            lines.push(("network_cmd_port", paused.port.to_string()));
+            lines.push(("state_slot", paused.slot.to_string()));
         }
         lines
             .into_iter()
@@ -167,6 +181,7 @@ video_font_enable = \"false\"\n";
         let cfg = AppendConfig {
             window: WindowMode::Fill { max: Size { width: 2488, height: 1382 } },
             staged_states_dir: None,
+            paused: None,
         };
         let expected = format!(
             "{COMMON}video_fullscreen = \"false\"\n\
@@ -183,6 +198,7 @@ video_window_auto_height_max = \"1382\"\n"
         let cfg = AppendConfig {
             window: WindowMode::Exact(Size { width: 1600, height: 1440 }),
             staged_states_dir: None,
+            paused: None,
         };
         let expected = format!(
             "{COMMON}video_fullscreen = \"false\"\n\
@@ -198,6 +214,7 @@ video_windowed_position_height = \"1440\"\n"
         let cfg = AppendConfig {
             window: WindowMode::Scale(4),
             staged_states_dir: None,
+            paused: None,
         };
         let expected = format!(
             "{COMMON}video_fullscreen = \"false\"\n\
@@ -216,6 +233,7 @@ video_fullscreen_y = \"0\"\n"
         let cfg = AppendConfig {
             window: WindowMode::Fullscreen,
             staged_states_dir: None,
+            paused: None,
         };
         assert_eq!(cfg.render(), COMMON);
     }
@@ -225,6 +243,7 @@ video_fullscreen_y = \"0\"\n"
         let cfg = AppendConfig {
             window: WindowMode::Fill { max: Size { width: 2488, height: 1382 } },
             staged_states_dir: Some(PathBuf::from("/tmp/x/states")),
+            paused: None,
         };
         let expected = format!(
             "{COMMON}video_fullscreen = \"false\"\n\
@@ -245,12 +264,47 @@ savestates_in_content_dir = \"false\"\n"
         let cfg = AppendConfig {
             window: WindowMode::Fullscreen,
             staged_states_dir: Some(PathBuf::from("/tmp/x/states")),
+            paused: None,
         };
         let expected = format!(
             "{COMMON}savestate_directory = \"/tmp/x/states\"\n\
 sort_savestates_enable = \"false\"\n\
 sort_savestates_by_content_enable = \"false\"\n\
 savestates_in_content_dir = \"false\"\n"
+        );
+        assert_eq!(cfg.render(), expected);
+    }
+
+    #[test]
+    fn render_paused_keys_after_staged_states() {
+        let cfg = AppendConfig {
+            window: WindowMode::Fullscreen,
+            staged_states_dir: Some(PathBuf::from("/tmp/x/states")),
+            paused: Some(PausedConfig { port: 55355, slot: 0 }),
+        };
+        let expected = format!(
+            "{COMMON}savestate_directory = \"/tmp/x/states\"\n\
+sort_savestates_enable = \"false\"\n\
+sort_savestates_by_content_enable = \"false\"\n\
+savestates_in_content_dir = \"false\"\n\
+network_cmd_enable = \"true\"\n\
+network_cmd_port = \"55355\"\n\
+state_slot = \"0\"\n"
+        );
+        assert_eq!(cfg.render(), expected);
+    }
+
+    #[test]
+    fn render_paused_with_slot_and_no_staging() {
+        let cfg = AppendConfig {
+            window: WindowMode::Fullscreen,
+            staged_states_dir: None,
+            paused: Some(PausedConfig { port: 60000, slot: 3 }),
+        };
+        let expected = format!(
+            "{COMMON}network_cmd_enable = \"true\"\n\
+network_cmd_port = \"60000\"\n\
+state_slot = \"3\"\n"
         );
         assert_eq!(cfg.render(), expected);
     }

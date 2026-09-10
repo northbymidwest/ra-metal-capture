@@ -163,6 +163,7 @@ fn run(cli: Cli) -> Result<()> {
     let append = AppendConfig {
         window: cli.window_mode(),
         staged_states_dir,
+        paused: None,
     };
     let appendconfig = tmp.path().join("append.cfg");
     std::fs::write(&appendconfig, append.render())
