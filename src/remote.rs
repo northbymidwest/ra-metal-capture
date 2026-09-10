@@ -10,6 +10,13 @@ use std::time::{Duration, Instant};
 /// A frame is about 17 ms; LOAD_STATE runs one frame and re-pauses.
 pub const COMMAND_SETTLE: Duration = Duration::from_millis(250);
 
+/// Time given to LOAD_STATE before anything else happens. Measured:
+/// LOAD_STATE is asynchronous and real presents continue for a short
+/// window after the command; a capture armed inside that window completes
+/// on the load's own frames instead of a frame advance's, so arming must
+/// wait until this window has passed.
+pub const LOAD_STATE_SETTLE: Duration = Duration::from_secs(1);
+
 const REPLY_TIMEOUT: Duration = Duration::from_secs(1);
 const STATUS_POLL: Duration = Duration::from_millis(200);
 
@@ -25,7 +32,9 @@ pub enum Status {
 /// `GET_STATUS PLAYING game_boy,Zelda,crc32=6887a34`.
 pub fn parse_status(reply: &str) -> Status {
     let mut words = reply.split_whitespace();
-    match (words.next(), words.next()) {
+    let command = words.next();
+    let state = words.next();
+    match (command, state) {
         (Some("GET_STATUS"), Some("PLAYING")) => Status::Playing,
         (Some("GET_STATUS"), Some("PAUSED")) => Status::Paused,
         (Some("GET_STATUS"), Some("CONTENTLESS")) => Status::Contentless,
@@ -94,11 +103,13 @@ impl Remote {
         }
     }
 
-    /// LOAD_STATE; RetroArch loads the configured slot, runs one frame, and
-    /// re-pauses. Waits COMMAND_SETTLE for that to happen.
+    /// LOAD_STATE; RetroArch loads the configured slot and keeps presenting
+    /// real frames for a short window afterward (measured; LOAD_STATE is
+    /// asynchronous). Waits LOAD_STATE_SETTLE so that window passes before
+    /// anything is armed against it.
     pub fn load_state(&self) -> Result<()> {
         self.send("LOAD_STATE")?;
-        sleep(COMMAND_SETTLE);
+        sleep(LOAD_STATE_SETTLE);
         Ok(())
     }
 

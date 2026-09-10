@@ -770,3 +770,154 @@ git commit -m "Document paused capture and record the reproducibility runs
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
+
+---
+
+### Task 6: Make the paused capture deterministic and hang-free
+
+Added after Task 5's runs: `--advance 30` hung and the default only worked by
+timing luck. Measured facts (2026-09-10, stock RetroArch.app, Vulkan):
+
+- `LOAD_STATE` is asynchronous. Real presents continue for a short window
+  after the command, and a capture armed inside that window completes on
+  the load's own frames. Arming must happen after that window.
+- After any `FRAMEADVANCE`, RetroArch presents nothing until the next
+  advance. In that mode a capture needs THREE advances after arming: one
+  advance never opens the capture, two open it without a drawable (the
+  second frame's swapchain image was acquired before the window), three
+  complete it. This count may depend on swapchain depth, so the tool must
+  advance until the capture completes rather than hard-code 3.
+- `gpucapture start` prints `triggering capture of 1 Frame from <pid> @ 0`
+  91 ms after launch, flushed even when stdout is a pipe, before it blocks.
+
+New semantics: `--advance N` (min 1, default 1) is the number of frame
+advances after the state load and before the capture is armed. The recorded
+frame is a fixed small number of advances after that, the same on every run,
+because once in post-advance mode nothing depends on wall-clock time.
+
+**Files:**
+- Modify: `src/capture.rs`, `src/remote.rs`, `src/main.rs` (help text only), spec, README
+
+**Interfaces:**
+- `remote::LOAD_STATE_SETTLE: Duration = 1 s` (new; `load_state` sleeps this instead of `COMMAND_SETTLE`).
+- `capture::MAX_CLOSING_ADVANCES: u32 = 6` (new).
+- `capture::gpucapture_start` gains a readiness callback: `fn gpucapture_start(pid: u32, frames: u32, output: &Path, on_armed: impl FnOnce()) -> Result<()>`; it spawns gpucapture with stdout piped, reads lines, calls `on_armed` when a line starts with `triggering capture`, and keeps draining stdout until exit (so the child never blocks on a full pipe).
+- `Trigger::Paused { port, advance }` unchanged in shape; `advance` now means pre-arm advances.
+
+- [ ] **Step 1: `remote.rs`**
+
+Add `pub const LOAD_STATE_SETTLE: Duration = Duration::from_secs(1);` with a doc comment stating the async-load fact, and use it in `load_state`. In `parse_status`, replace the `(words.next(), words.next())` tuple with two named lets (`command`, `state`) matched as a tuple; behavior identical, existing tests unchanged.
+
+- [ ] **Step 2: `capture.rs`, readiness signal**
+
+```rust
+/// Run `gpucapture start`, calling `on_armed` once it reports it is waiting
+/// for a boundary. gpucapture flushes that line even into a pipe (measured).
+fn gpucapture_start(pid: u32, frames: u32, output: &Path, on_armed: impl FnOnce()) -> Result<()> {
+    let mut child = Command::new("gpucapture")
+        .args(["start", "--pid", &pid.to_string(), "--count", &frames.to_string()])
+        .arg("--output")
+        .arg(output)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .context("running `gpucapture start`")?;
+    let stdout = child.stdout.take().context("gpucapture stdout")?;
+    let mut on_armed = Some(on_armed);
+    for line in BufReader::new(stdout).lines() {
+        let line = line.context("reading gpucapture output")?;
+        if line.starts_with("triggering capture")
+            && let Some(f) = on_armed.take()
+        {
+            f();
+        }
+    }
+    let status = child.wait().context("waiting for gpucapture")?;
+    if !status.success() {
+        bail!("`gpucapture start` failed with {status}");
+    }
+    // (unchanged `index` check)
+    Ok(())
+}
+```
+
+The settle flow calls it with `|| {}`. Note the settle flow previously let gpucapture print progress to the terminal; with stdout piped that progress is no longer shown, which is fine (stderr still is).
+
+- [ ] **Step 3: `capture.rs`, the paused sequence**
+
+Replace the body of `capture_paused` after `remote.load_state()?` with:
+
+```rust
+    for _ in 0..advance {
+        remote.frame_advance()?;
+    }
+    eprintln!("advanced {advance} frame(s) from the loaded state; arming capture");
+
+    let (armed_tx, armed_rx) = std::sync::mpsc::channel::<()>();
+    let output_owned = output.to_path_buf();
+    let capture = std::thread::spawn(move || {
+        gpucapture_start(pid, frames, &output_owned, move || {
+            let _ = armed_tx.send(());
+        })
+    });
+    if armed_rx.recv_timeout(ARM_TIMEOUT).is_err() {
+        guard.kill_now();
+        let _ = capture.join();
+        bail!("gpucapture did not report it was armed within {ARM_TIMEOUT:?}");
+    }
+
+    // A paused RetroArch presents only on frame advances, and gpucapture
+    // needs more than one present to open and close a frame (measured: 3).
+    // Advance until the capture thread finishes, with a hard cap.
+    let mut closing = 0;
+    while !capture.is_finished() {
+        if closing == MAX_CLOSING_ADVANCES {
+            guard.kill_now();
+            let _ = capture.join();
+            bail!(
+                "capture did not complete after {MAX_CLOSING_ADVANCES} frame advances; \
+                 RetroArch was killed to release gpucapture"
+            );
+        }
+        if let Err(e) = remote.frame_advance() {
+            guard.kill_now();
+            let _ = capture.join();
+            return Err(e.context("advancing a frame to close the capture; RetroArch was killed to release gpucapture"));
+        }
+        closing += 1;
+    }
+    match capture.join() {
+        Ok(result) => result?,
+        Err(_) => bail!("the gpucapture thread panicked"),
+    }
+    eprintln!("capture closed after {closing} further advance(s)");
+    Ok(remote)
+```
+
+with `const ARM_TIMEOUT: Duration = Duration::from_secs(10);` and `const MAX_CLOSING_ADVANCES: u32 = 6;`. Remove `ARM_DELAY`. `frame_advance` already sleeps `COMMAND_SETTLE` (250 ms) after sending, which gives gpucapture time to react between advances; `is_finished` is checked after each.
+
+- [ ] **Step 4: `main.rs` help text**
+
+`--advance`: `/// Frame advances after loading the state, before the capture is armed`.
+
+- [ ] **Step 5: Run everything**
+
+Run: `cargo test && cargo clippy --all-targets -- -D warnings`
+Expected: 49 tests PASS, clippy clean.
+
+- [ ] **Step 6: Real runs**
+
+Same command as Task 5, three times: `--advance 1` twice (outputs `/tmp/ladx-det-1.gputrace`, `/tmp/ladx-det-2.gputrace`) and `--advance 30` once (`/tmp/ladx-det-30.gputrace`). Expected stderr per run: "advanced N frame(s) ...", then "capture closed after K further advance(s)" with the same K every run (3 is the measured value), the output path, and RetroArch exiting on its own. Record K and the sizes. Also confirm `pgrep -fl "MacOS/RetroArch"` is empty afterwards.
+
+- [ ] **Step 7: Spec and README**
+
+Spec `capture` section: replace the paused-flow steps with the new sequence (load, 1 s, N advances, arm and wait for the readiness line, advance until complete with cap 6, QUIT) and replace the "Why a frame advance" paragraph with the measured facts above. README: update `--advance`'s row and the "How it works" paused flow accordingly, replace the "Known issues" entry about `--advance 30` with the new Verified results, and state plainly that the recorded frame is a fixed number of advances past `--advance`, identical across runs.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add src/capture.rs src/remote.rs src/main.rs README.md docs/superpowers/specs/2026-09-09-retroarch-capture-design.md docs/superpowers/plans/2026-09-10-paused-capture.md
+git commit -m "Advance until gpucapture closes the frame; wait for its readiness line
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```

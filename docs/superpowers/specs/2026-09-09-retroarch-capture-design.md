@@ -44,8 +44,8 @@ retroarch-capture [OPTIONS] --core <CORE> --rom <ROM> --output <OUT.gputrace>
   --fullscreen        Launch with -f. Conflicts with --size, --scale.
   --settle <SECS>     Seconds to wait before capturing when no state is given
                       [default: 5]
-  --advance <N>       Frames to run after loading the state; the Nth is
-                      captured [default: 1, min 1]
+  --advance <N>       Frame advances after loading the state, before the
+                      capture is armed [default: 1, min 1]
   --cmd-port <PORT>   UDP port for RetroArch's command interface, enabled
                       only for this run [default: 55355]
   --frames <N>        Number of frame boundaries to capture [default: 1]
@@ -221,36 +221,51 @@ vs. `Trigger::Paused`):
    `PLAYING`, polling every 200 ms up to `ready_timeout`. Fail if RetroArch
    exits first.
 5. `PAUSE_TOGGLE`, then confirm `GET_STATUS` reports `PAUSED`.
-6. `LOAD_STATE`. RetroArch loads the configured slot, runs one frame, and
-   re-pauses; wait `COMMAND_SETTLE` (250 ms) for that to happen.
-7. `FRAMEADVANCE` `--advance` minus 1 times, so RetroArch sits one advance
-   short of the frame to capture.
+6. `LOAD_STATE`. RetroArch loads the configured slot; wait
+   `LOAD_STATE_SETTLE` (1 s) for the short window of real, asynchronous
+   presents that follow the load to pass before anything is armed against
+   it.
+7. `FRAMEADVANCE` `--advance` times (min 1, default 1).
 8. Arm `gpucapture start --pid <PID> --count <frames> --output <out>` on a
-   background thread, wait 500 ms for it to start polling, then send the
-   final `FRAMEADVANCE`. A paused RetroArch re-presents the same frame on
-   every redraw but never yields a capturable boundary for `gpucapture`; a
-   frame advance does. If the advance command itself fails, kill RetroArch
-   (which releases `gpucapture`) and join the thread rather than leaking it.
-9. Join the capture thread; fail if it panicked or `gpucapture start` failed.
-10. Unless `--keep-running`, send `QUIT` twice (RetroArch's press-twice
+   background thread with its stdout piped, and wait (up to 10 s) for the
+   thread to report the line it flushes once it is waiting for a boundary
+   (`triggering capture ...`). Fail, killing RetroArch first, if that line
+   never arrives.
+9. Send `FRAMEADVANCE` repeatedly, checking after each whether the capture
+   thread has finished, up to `MAX_CLOSING_ADVANCES` (6) advances. A paused
+   RetroArch presents only on a frame advance, and `gpucapture` needs more
+   than one present to open and close a frame (measured: 3, though this may
+   depend on swapchain depth, hence advancing until the capture reports
+   done rather than hard-coding the count). If an advance command itself
+   fails, or the cap is reached, kill RetroArch (which releases
+   `gpucapture`) and join the thread rather than leaking it.
+10. Join the capture thread; fail if it panicked or `gpucapture start`
+    failed.
+11. Unless `--keep-running`, send `QUIT` twice (RetroArch's press-twice
     default) and wait up to 3 s for the process to exit; fall back to
     SIGTERM then SIGKILL if it hasn't.
-11. Remove the temp dir.
+12. Remove the temp dir.
 
-**Why a frame advance.** A spike measured RetroArch's UDP command interface
-directly before this design was approved: `GET_STATUS` replies
-`GET_STATUS PLAYING <core>,<content>,crc32=<hex>`, `GET_STATUS PAUSED ...`,
-or `GET_STATUS CONTENTLESS`; `PAUSE_TOGGLE`, `LOAD_STATE`, `FRAMEADVANCE`,
-and `QUIT` produce no reply. `QUIT` must be sent twice, matching RetroArch's
-press-twice-to-quit default. `LOAD_STATE` while paused loads the file, runs
-one frame, and re-pauses (`retroarch.c` near line 3750). Critically,
-`gpucapture start --count 1` never completes while RetroArch sits paused
-(measured: 30 s stuck at "0 / 1 CAMetalDrawable"), but completes 0.6 s after
-a single `FRAMEADVANCE`. A paused RetroArch keeps redrawing the same frame,
-but a redraw of an unchanged frame is not a new presentable boundary; only
-an actual frame advance produces one. Hence the design always ends on an
-advance, arming `gpucapture` first so it is already polling when that
-advance happens.
+**Why advance until the capture closes.** A spike measured RetroArch's UDP
+command interface directly before this design was approved: `GET_STATUS`
+replies `GET_STATUS PLAYING <core>,<content>,crc32=<hex>`,
+`GET_STATUS PAUSED ...`, or `GET_STATUS CONTENTLESS`; `PAUSE_TOGGLE`,
+`LOAD_STATE`, `FRAMEADVANCE`, and `QUIT` produce no reply. `QUIT` must be
+sent twice, matching RetroArch's press-twice-to-quit default. A follow-up
+measurement (2026-09-10, stock RetroArch.app, Vulkan) found the original
+fixed-delay design was unsound: `LOAD_STATE` is asynchronous, and real
+presents continue for a short window after the command, so a capture armed
+inside that window completes on the load's own frames rather than on a
+frame advance. After any `FRAMEADVANCE`, RetroArch presents nothing until
+the next advance, and in that mode a capture needs three advances after
+arming: one never opens the capture, two open it without a drawable (the
+second frame's swapchain image was acquired before the window), and three
+complete it. `gpucapture start` prints `triggering capture of 1 Frame from
+<pid> @ 0` 91 ms after launch, flushed even when stdout is a pipe, before
+it blocks, which is what the readiness callback watches for. Because the
+closing-advance count may depend on swapchain depth, the tool advances
+until the capture thread finishes rather than hard-coding 3, with
+`MAX_CLOSING_ADVANCES` as a backstop against a capture that never closes.
 
 If `gpucapture start` reports no capturable boundary (a MoltenVK risk noted
 below), the error is surfaced verbatim; the fallback of `--until-exit` is left

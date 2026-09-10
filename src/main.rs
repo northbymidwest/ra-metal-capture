@@ -88,7 +88,7 @@ struct Cli {
     #[arg(long, default_value_t = 5.0, value_parser = parse_settle)]
     settle: f64,
 
-    /// Frames to run after loading the state; the Nth frame is the one captured
+    /// Frame advances after loading the state, before the capture is armed
     #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
     advance: u32,
 

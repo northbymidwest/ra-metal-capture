@@ -4,6 +4,7 @@ use anyhow::{Context, Result, bail};
 use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
 use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread::sleep;
@@ -162,17 +163,28 @@ fn prepare_output(output: &Path) -> Result<()> {
         .with_context(|| format!("removing stale bundle {}", output.display()))
 }
 
-/// How long `gpucapture start` needs to arm before the boundary it waits
-/// for. Measured: it prints "triggering capture" well under 500 ms.
-const ARM_DELAY: Duration = Duration::from_millis(500);
-
-fn gpucapture_start(pid: u32, frames: u32, output: &Path) -> Result<()> {
-    let status = Command::new("gpucapture")
+/// Run `gpucapture start`, calling `on_armed` once it reports it is waiting
+/// for a boundary. gpucapture flushes that line even into a pipe (measured).
+fn gpucapture_start(pid: u32, frames: u32, output: &Path, on_armed: impl FnOnce()) -> Result<()> {
+    let mut child = Command::new("gpucapture")
         .args(["start", "--pid", &pid.to_string(), "--count", &frames.to_string()])
         .arg("--output")
         .arg(output)
-        .status()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
         .context("running `gpucapture start`")?;
+    let stdout = child.stdout.take().context("gpucapture stdout")?;
+    let mut on_armed = Some(on_armed);
+    for line in BufReader::new(stdout).lines() {
+        let line = line.context("reading gpucapture output")?;
+        if line.starts_with("triggering capture")
+            && let Some(f) = on_armed.take()
+        {
+            f();
+        }
+    }
+    let status = child.wait().context("waiting for gpucapture")?;
     if !status.success() {
         bail!("`gpucapture start` failed with {status}");
     }
@@ -195,7 +207,20 @@ fn bail_if_exited(guard: &mut ChildGuard, when: &str, log_path: &Path) -> Result
     Ok(())
 }
 
-/// Pause, load the state, advance, and capture the final advance.
+/// How long to wait for `gpucapture start` to report it is armed and
+/// waiting for a boundary, once it has been launched.
+const ARM_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Cap on frame advances sent while waiting for an armed capture to close.
+/// Measured: a paused RetroArch needs three advances after arming (one
+/// never opens the capture, two open it without a drawable, three complete
+/// it); this may depend on swapchain depth, so the tool advances until the
+/// capture finishes rather than hard-coding the count, with this as a
+/// backstop against a capture that never closes.
+const MAX_CLOSING_ADVANCES: u32 = 6;
+
+/// Pause, load the state, advance `advance` times, then advance until the
+/// armed capture closes.
 fn capture_paused(
     guard: &mut ChildGuard,
     port: u16,
@@ -211,29 +236,50 @@ fn capture_paused(
     bail_if_exited(guard, "before it could be paused", log_path)?;
     remote.pause()?;
     remote.load_state()?;
-    for _ in 1..advance {
+
+    for _ in 0..advance {
         remote.frame_advance()?;
     }
-    eprintln!("paused on the loaded state; arming capture, then advancing frame {advance}");
+    eprintln!("advanced {advance} frame(s) from the loaded state; arming capture");
 
+    let (armed_tx, armed_rx) = std::sync::mpsc::channel::<()>();
     let output_owned = output.to_path_buf();
-    let capture = std::thread::spawn(move || gpucapture_start(pid, frames, &output_owned));
-    sleep(ARM_DELAY);
-    let advanced = remote.frame_advance();
-    if let Err(e) = advanced {
-        // RetroArch is paused, so `gpucapture start` is blocked waiting for
-        // a boundary that will never come; joining without killing first
-        // would hang forever. Killing the pid releases gpucapture (it exits
-        // once its target is gone), so join it here rather than leaking the
-        // thread and its orphaned child.
+    let capture = std::thread::spawn(move || {
+        gpucapture_start(pid, frames, &output_owned, move || {
+            let _ = armed_tx.send(());
+        })
+    });
+    if armed_rx.recv_timeout(ARM_TIMEOUT).is_err() {
         guard.kill_now();
         let _ = capture.join();
-        return Err(e.context("advancing the final frame; RetroArch was killed to release gpucapture"));
+        bail!("gpucapture did not report it was armed within {ARM_TIMEOUT:?}");
+    }
+
+    // A paused RetroArch presents only on frame advances, and gpucapture
+    // needs more than one present to open and close a frame (measured: 3).
+    // Advance until the capture thread finishes, with a hard cap.
+    let mut closing = 0;
+    while !capture.is_finished() {
+        if closing == MAX_CLOSING_ADVANCES {
+            guard.kill_now();
+            let _ = capture.join();
+            bail!(
+                "capture did not complete after {MAX_CLOSING_ADVANCES} frame advances; \
+                 RetroArch was killed to release gpucapture"
+            );
+        }
+        if let Err(e) = remote.frame_advance() {
+            guard.kill_now();
+            let _ = capture.join();
+            return Err(e.context("advancing a frame to close the capture; RetroArch was killed to release gpucapture"));
+        }
+        closing += 1;
     }
     match capture.join() {
         Ok(result) => result?,
         Err(_) => bail!("the gpucapture thread panicked"),
     }
+    eprintln!("capture closed after {closing} further advance(s)");
     Ok(remote)
 }
 
@@ -261,7 +307,7 @@ pub fn run(cmd: &LaunchCommand, opts: &CaptureOptions) -> Result<()> {
             eprintln!("pid {pid} is capturable; settling for {settle:?}");
             sleep(settle);
             bail_if_exited(&mut guard, "during settle", &opts.log_path)?;
-            gpucapture_start(pid, opts.frames, &opts.output)?;
+            gpucapture_start(pid, opts.frames, &opts.output, || {})?;
             None
         }
         Trigger::Paused { port, advance } => Some(capture_paused(

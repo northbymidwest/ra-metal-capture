@@ -36,7 +36,7 @@ Options:
 | `--scale N` | integer scale of the core's native resolution |
 | `--fullscreen` | launch with `-f` |
 | `--settle SECS` | wait before capturing when no state is given (default 5) |
-| `--advance N` | frames to run after loading the state; the Nth frame is the one captured (default 1); only applies when `--state` or `--slot` is given |
+| `--advance N` | frame advances after loading the state, before the capture is armed (default 1, min 1); only applies when `--state` or `--slot` is given |
 | `--cmd-port PORT` | UDP port for RetroArch's command interface, enabled only for this run (default 55355) |
 | `--frames N` | frame boundaries to record (default 1) |
 | `--keep-running` | do not close RetroArch afterwards |
@@ -63,18 +63,20 @@ area, keeping the aspect ratio).
    only (`network_cmd_enable`, `network_cmd_port`) and points
    `state_slot` at the slot to load. Once the PID is capturable, the tool
    pauses RetroArch over that UDP connection, sends `LOAD_STATE`, and
-   frame-advances `--advance` minus one times, leaving RetroArch one
-   advance short of the frame to capture. It then arms
-   `gpucapture start --pid P --count N --output OUT` in the background,
-   gives it a moment to start polling, and sends the final
-   `FRAMEADVANCE`. A frame advance is needed because a paused RetroArch
-   re-presents the same image on every redraw, and `gpucapture` never
-   treats a re-presented frame as a new boundary (measured); only an
-   actual advance produces one, so the tool always ends on an advance
-   with the capture already armed to catch it. If sending that final
-   advance fails, the tool kills RetroArch immediately so `gpucapture`
-   releases instead of waiting forever for a boundary that can no longer
-   arrive, joins the capture thread, and reports the send error.
+   waits 1 s: `LOAD_STATE` is asynchronous and RetroArch keeps presenting
+   real frames for a short window afterward (measured), so arming a
+   capture inside that window would complete it on the load's own frames
+   instead of a frame advance's. The tool then frame-advances `--advance`
+   times and arms `gpucapture start --pid P --count N --output OUT` in the
+   background, waiting for the line it flushes once it is polling for a
+   boundary. A paused RetroArch presents only on a frame advance, and
+   `gpucapture` needs more than one present to open and close a frame
+   (measured: 3, though this may vary), so the tool sends further
+   `FRAMEADVANCE`s, checking after each whether the capture has finished,
+   up to a cap of 6. If an advance fails, or the cap is reached, the tool
+   kills RetroArch immediately so `gpucapture` releases instead of waiting
+   forever for a boundary that can no longer arrive, then joins the
+   capture thread and reports the error.
 5. RetroArch is asked to quit (`QUIT`, sent twice, since paused capture
    already has a command connection open and RetroArch's default
    press-twice-to-quit applies); if it has not exited after 3 s, or no
@@ -87,9 +89,14 @@ area, keeping the aspect ratio).
 For paused capture, the same `--state` (or `--slot`) plus the same
 `--advance` always produces the same emulated frame: RetroArch replays
 input-free from a fixed save state, so frame N after the load is
-deterministic. That makes it useful for isolating one variable, e.g. keep
-the state and `--advance` fixed and change only `--shader` between runs to
-compare two shader passes over the exact same frame.
+deterministic. The recorded frame is `--advance` advances past the loaded
+state, plus a fixed small number of further advances the tool sends while
+waiting for the capture to close (measured at 3, printed as "capture closed
+after N further advance(s)"); that further count is identical on every run,
+so it does not affect reproducibility. That makes paused capture useful for
+isolating one variable, e.g. keep the state and `--advance` fixed and change
+only `--shader` between runs to compare two shader passes over the exact
+same frame.
 
 The appendconfig always sets `pause_nonactive=false` (RetroArch stops
 rendering when unfocused, which would starve the capture),
@@ -209,25 +216,34 @@ command: MTL_CAPTURE_ENABLED=1 /Applications/RetroArch.app/Contents/MacOS/RetroA
 expected for the paused flow. The two runs produced same-size (67M)
 bundles, consistent with the same emulated frame on both.
 
-The `--advance 30` run is recorded under Known issues below.
+The `--advance 30` run from this dated run hung; it is superseded by the
+deterministic flow below, which fixes that hang.
 
-## Known issues
+### 2026-09-10: deterministic paused capture
 
-**`--advance 30` hangs indefinitely (2026-09-10).** Running the same
-capture with `--advance 30` instead of the default 1 printed `launched
-RetroArch as pid <pid>` and `paused on the loaded state; arming capture,
-then advancing frame 30`, armed `gpucapture start`, and then sat at
-`0 / 1 CAMetalDrawable` forever: the capture never reported a boundary and
-the tool never printed an output path. Two attempts were made, both under
-a 120 s timeout, and both hung identically for the full 120 s with no
-progress past `0 / 1 CAMetalDrawable`. Both attempts were killed by the
-timeout; `pgrep -fl "MacOS/RetroArch"` was empty after each, so no
-process was left running, and no `/tmp/ladx-paused-30.gputrace` bundle was
-written. The tool was not modified to work around this; the 29
-non-captured `FRAMEADVANCE` calls ahead of the final, armed one behave
-identically in code to the single advance used by the two runs above that
-succeeded, so the difference is in RetroArch or `gpucapture`, not in this
-tool's logic. Per the design doc's noted MoltenVK risk, `gpucapture
-boundaries --pid <pid>` during a hang would be the next diagnostic step,
-along with retrying under a non-Vulkan `video_driver`, but neither was
-attempted here to stay within the run budget for this task.
+Following a measured root cause (`LOAD_STATE` is asynchronous, and a paused
+RetroArch needs several frame advances after arming, not a fixed delay, to
+let `gpucapture` open and close a frame), the paused flow was changed to
+wait out `LOAD_STATE`'s settle window before arming, wait for `gpucapture`'s
+own readiness line instead of a fixed delay, and advance until the capture
+reports done instead of ending on a single, hopeful advance. Same ROM,
+state and shader as above, `video_driver` still `vulkan` (MoltenVK).
+`pgrep -fl "MacOS/RetroArch"` was checked and empty before the first run and
+after every run below.
+
+| run | output | size | closing advances | result |
+|---|---|---|---|---|
+| `--advance 1`, run 1, `--verbose` | `/tmp/ladx-det-1.gputrace` | 89M | 3 | succeeded |
+| `--advance 1`, run 2 | `/tmp/ladx-det-2.gputrace` | 89M | 3 | succeeded |
+| `--advance 30` | `/tmp/ladx-det-30.gputrace` | 92M | 3 | succeeded |
+
+Every run printed `advanced N frame(s) from the loaded state; arming
+capture`, then `capture closed after 3 further advance(s)`, then the output
+path, and RetroArch exited on its own. The `--advance 30` run, which
+previously hung indefinitely at `0 / 1 CAMetalDrawable`, now completes like
+the others: the closing-advance count (3) was identical across all three
+runs, including the one with a very different `--advance`, confirming it
+does not depend on wall-clock timing. The two `--advance 1` runs produced
+same-size (89M) bundles, consistent with the same emulated frame on both;
+`--advance 30` differs in size (92M) because it captures a different,
+later frame, not because of any nondeterminism.
