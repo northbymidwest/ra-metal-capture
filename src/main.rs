@@ -189,7 +189,7 @@ fn run(cli: Cli) -> Result<()> {
     let output = std::path::absolute(&cli.output)
         .with_context(|| format!("resolving {}", cli.output.display()))?;
     let opts = capture::CaptureOptions {
-        settle: Duration::from_secs_f64(cli.settle),
+        trigger: capture::Trigger::Settle(Duration::from_secs_f64(cli.settle)),
         frames: cli.frames,
         output: output.clone(),
         keep_running: cli.keep_running,

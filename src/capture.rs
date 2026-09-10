@@ -1,4 +1,5 @@
 use crate::launch::LaunchCommand;
+use crate::remote::Remote;
 use anyhow::{Context, Result, bail};
 use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
@@ -57,9 +58,18 @@ impl Drop for ChildGuard {
     }
 }
 
+/// What to wait for before capturing.
+#[derive(Clone, Copy)]
+pub enum Trigger {
+    /// Wait this long after RetroArch is capturable, then capture whatever is on screen.
+    Settle(Duration),
+    /// Pause, load the configured state slot, advance `advance` frames; the last advance is captured.
+    Paused { port: u16, advance: u32 },
+}
+
 pub struct CaptureOptions {
-    /// Time to wait after RetroArch becomes capturable before capturing.
-    pub settle: Duration,
+    /// What to wait for before capturing.
+    pub trigger: Trigger,
     /// Number of frame boundaries to record.
     pub frames: u32,
     /// Absolute path of the `.gputrace` to write.
@@ -143,7 +153,72 @@ fn prepare_output(output: &Path) -> Result<()> {
         .with_context(|| format!("removing stale bundle {}", output.display()))
 }
 
-/// Launch RetroArch, wait until it is capturable, settle, capture, terminate.
+/// How long `gpucapture start` needs to arm before the boundary it waits
+/// for. Measured: it prints "triggering capture" well under 500 ms.
+const ARM_DELAY: Duration = Duration::from_millis(500);
+
+fn gpucapture_start(pid: u32, frames: u32, output: &Path) -> Result<()> {
+    let status = Command::new("gpucapture")
+        .args(["start", "--pid", &pid.to_string(), "--count", &frames.to_string()])
+        .arg("--output")
+        .arg(output)
+        .status()
+        .context("running `gpucapture start`")?;
+    if !status.success() {
+        bail!("`gpucapture start` failed with {status}");
+    }
+    if !output.join("index").exists() {
+        bail!(
+            "`gpucapture start` succeeded but {} has no `index` entry; the bundle looks incomplete",
+            output.display()
+        );
+    }
+    Ok(())
+}
+
+fn bail_if_exited(guard: &mut ChildGuard, when: &str, log_path: &Path) -> Result<()> {
+    if let Some(status) = guard.poll()? {
+        bail!(
+            "RetroArch exited ({status}) {when}. Last log lines:\n{}",
+            log_tail(log_path)
+        );
+    }
+    Ok(())
+}
+
+/// Pause, load the state, advance, and capture the final advance.
+fn capture_paused(
+    guard: &mut ChildGuard,
+    port: u16,
+    advance: u32,
+    frames: u32,
+    output: &Path,
+    ready_timeout: Duration,
+    log_path: &Path,
+) -> Result<Remote> {
+    let pid = guard.pid();
+    let remote = Remote::connect(port)?;
+    remote.wait_playing(ready_timeout)?;
+    bail_if_exited(guard, "before it could be paused", log_path)?;
+    remote.pause()?;
+    remote.load_state()?;
+    for _ in 1..advance {
+        remote.frame_advance()?;
+    }
+    eprintln!("paused on the loaded state; arming capture, then advancing frame {advance}");
+
+    let output_owned = output.to_path_buf();
+    let capture = std::thread::spawn(move || gpucapture_start(pid, frames, &output_owned));
+    sleep(ARM_DELAY);
+    remote.frame_advance()?;
+    match capture.join() {
+        Ok(result) => result?,
+        Err(_) => bail!("the gpucapture thread panicked"),
+    }
+    Ok(remote)
+}
+
+/// Launch RetroArch, wait until it is capturable, run the trigger, capture, terminate.
 pub fn run(cmd: &LaunchCommand, opts: &CaptureOptions) -> Result<()> {
     prepare_output(&opts.output)?;
     let log = File::create(&opts.log_path)
@@ -161,37 +236,43 @@ pub fn run(cmd: &LaunchCommand, opts: &CaptureOptions) -> Result<()> {
     eprintln!("launched RetroArch as pid {pid}");
 
     wait_capturable(&mut guard, opts.ready_timeout, &opts.log_path)?;
-    eprintln!("pid {pid} is capturable; settling for {:?}", opts.settle);
-    sleep(opts.settle);
-    if let Some(status) = guard.poll()? {
-        bail!(
-            "RetroArch exited ({status}) during settle. Last log lines:\n{}",
-            log_tail(&opts.log_path)
-        );
-    }
 
-    let status = Command::new("gpucapture")
-        .args(["start", "--pid", &pid.to_string(), "--count", &opts.frames.to_string()])
-        .arg("--output")
-        .arg(&opts.output)
-        .status()
-        .context("running `gpucapture start`")?;
-    if !status.success() {
-        bail!("`gpucapture start` failed with {status}");
-    }
-    let index = opts.output.join("index");
-    if !index.exists() {
-        bail!(
-            "`gpucapture start` succeeded but {} has no `index` entry; the bundle looks incomplete",
-            opts.output.display()
-        );
-    }
+    let remote = match opts.trigger {
+        Trigger::Settle(settle) => {
+            eprintln!("pid {pid} is capturable; settling for {settle:?}");
+            sleep(settle);
+            bail_if_exited(&mut guard, "during settle", &opts.log_path)?;
+            gpucapture_start(pid, opts.frames, &opts.output)?;
+            None
+        }
+        Trigger::Paused { port, advance } => Some(capture_paused(
+            &mut guard,
+            port,
+            advance,
+            opts.frames,
+            &opts.output,
+            opts.ready_timeout,
+            &opts.log_path,
+        )?),
+    };
 
     if opts.keep_running {
         guard.armed = false;
-    } else {
-        guard.terminate(Duration::from_secs(3));
+        return Ok(());
     }
+    if let Some(remote) = remote {
+        // Ask nicely first; the guard's SIGTERM/SIGKILL remains the fallback.
+        let _ = remote.quit();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            if matches!(guard.poll(), Ok(Some(_))) {
+                guard.armed = false;
+                return Ok(());
+            }
+            sleep(Duration::from_millis(50));
+        }
+    }
+    guard.terminate(Duration::from_secs(3));
     Ok(())
 }
 
