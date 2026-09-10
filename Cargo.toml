@@ -9,9 +9,6 @@ repository = "https://github.com/northbymidwest/ra-metal-capture"
 readme = "README.md"
 keywords = ["macos", "metal", "gpu", "gputrace", "retroarch"]
 categories = ["command-line-utilities", "development-tools::profiling"]
-# The safety net that keeps the crate off crates.io until a release is meant;
-# RELEASING.md says when to remove it.
-publish = false
 # What a `cargo install` needs: the code, its tests, and the README/LICENSE.
 # Repository tooling and the design docs stay in git.
 exclude = [

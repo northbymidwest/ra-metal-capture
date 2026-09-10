@@ -2,11 +2,11 @@
 
 Notable changes per release. Dates are the publish date.
 
-## Unreleased
+## 0.1.0 - 2026-09-10
 
-Initial release.
+### Added
 
-- Launches a RetroArch.app with a core, ROM, save state and shader preset,
+- Initial release. Launches a RetroArch.app with a core, ROM, save state and shader preset,
   sizes the window, and records presented frames to a `.gputrace` with
   Apple's `gpucapture(1)`.
 - Paused capture: with `--state` or `--slot`, the state is loaded over
