@@ -37,8 +37,21 @@ fn parse_settle(s: &str) -> std::result::Result<f64, String> {
     Ok(v)
 }
 
-/// Launch RetroArch with a ROM, save state and shader preset, then capture
-/// frames to a .gputrace with gpucapture.
+/// Path extensions RetroArch's built-in image viewer core accepts.
+pub const IMAGE_EXTENSIONS: [&str; 11] = [
+    "jpg", "jpeg", "png", "bmp", "psd", "tga", "gif", "hdr", "pic", "ppm", "pgm",
+];
+
+/// Whether `path` has an extension the built-in image viewer core accepts,
+/// checked case-insensitively.
+fn is_image_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| IMAGE_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+}
+
+/// Launch RetroArch with a ROM and save state, or a static image, plus a
+/// shader preset, then capture frames to a .gputrace with gpucapture.
 #[derive(Parser, Debug)]
 #[command(version, about)]
 struct Cli {
@@ -47,12 +60,26 @@ struct Cli {
     app: PathBuf,
 
     /// Path to a libretro .dylib, or a bare name resolved in libretro_directory
-    #[arg(long)]
-    core: String,
+    #[arg(
+        long,
+        required_unless_present = "image",
+        conflicts_with = "image",
+        requires = "rom"
+    )]
+    core: Option<String>,
 
     /// Content file to load
-    #[arg(long)]
-    rom: PathBuf,
+    #[arg(
+        long,
+        required_unless_present = "image",
+        conflicts_with = "image",
+        requires = "core"
+    )]
+    rom: Option<PathBuf>,
+
+    /// Static image to load through RetroArch's built-in image viewer core
+    #[arg(long, conflicts_with_all = ["core", "rom", "state", "slot", "advance"])]
+    image: Option<PathBuf>,
 
     /// Save state file to load at launch (staged as slot 0 in a temp dir)
     #[arg(long, conflicts_with = "slot")]
@@ -140,11 +167,35 @@ fn run(cli: Cli) -> Result<()> {
         .get("libretro_directory")
         .map(|s| config::expand_tilde(s))
         .unwrap_or_else(|| config::expand_tilde("~/Library/Application Support/RetroArch/cores"));
-    let core = core::resolve_core(&cli.core, &libretro_dir)?;
 
-    if !cli.rom.is_file() {
-        bail!("ROM not found at {}", cli.rom.display());
-    }
+    let (core, content) = if let Some(image) = &cli.image {
+        if !is_image_path(image) {
+            bail!(
+                "{} does not have an image extension the image viewer accepts ({})",
+                image.display(),
+                IMAGE_EXTENSIONS.join(", ")
+            );
+        }
+        if !image.is_file() {
+            bail!("image not found at {}", image.display());
+        }
+        (None, image.clone())
+    } else {
+        let core_arg = cli
+            .core
+            .as_deref()
+            .context("--core is required without --image")?;
+        let rom = cli
+            .rom
+            .clone()
+            .context("--rom is required without --image")?;
+        let core = core::resolve_core(core_arg, &libretro_dir)?;
+        if !rom.is_file() {
+            bail!("ROM not found at {}", rom.display());
+        }
+        (Some(core), rom)
+    };
+
     if let Some(shader) = &cli.shader
         && !shader.is_file()
     {
@@ -165,7 +216,7 @@ fn run(cli: Cli) -> Result<()> {
     let (paused, staged_states_dir) = match (&cli.state, cli.slot) {
         (Some(state_file), _) => {
             let dir = tmp.path().join("states");
-            let slot = state::stage(state_file, &cli.rom, &dir)?;
+            let slot = state::stage(state_file, &content, &dir)?;
             (
                 Some(PausedConfig {
                     port: cli.cmd_port,
@@ -188,6 +239,7 @@ fn run(cli: Cli) -> Result<()> {
         window: cli.window_mode(),
         staged_states_dir,
         paused,
+        image_viewer: cli.image.is_some(),
     };
     let appendconfig = tmp.path().join("append.cfg");
     std::fs::write(&appendconfig, append.render())
@@ -196,7 +248,7 @@ fn run(cli: Cli) -> Result<()> {
     let plan = LaunchPlan {
         binary,
         core,
-        rom: cli.rom.clone(),
+        content,
         shader: cli.shader.clone(),
         appendconfig,
         fullscreen: cli.fullscreen,
@@ -240,8 +292,9 @@ fn run(cli: Cli) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
-    fn parse(args: &[&str]) -> std::result::Result<Cli, clap::Error> {
+    fn parse_rom(args: &[&str]) -> std::result::Result<Cli, clap::Error> {
         let mut full = vec![
             "ra-metal-capture",
             "--core",
@@ -255,9 +308,15 @@ mod tests {
         Cli::try_parse_from(full)
     }
 
+    fn parse_raw(args: &[&str]) -> std::result::Result<Cli, clap::Error> {
+        let mut full = vec!["ra-metal-capture", "--output", "o"];
+        full.extend_from_slice(args);
+        Cli::try_parse_from(full)
+    }
+
     #[test]
     fn minimal_args_parse_with_defaults() {
-        let cli = parse(&[]).unwrap();
+        let cli = parse_rom(&[]).unwrap();
         assert_eq!(cli.app, PathBuf::from("/Applications/RetroArch.app"));
         assert_eq!(cli.settle, 5.0);
         assert_eq!(cli.frames, 1);
@@ -266,19 +325,19 @@ mod tests {
 
     #[test]
     fn state_and_slot_conflict() {
-        assert!(parse(&["--state", "s", "--slot", "1"]).is_err());
+        assert!(parse_rom(&["--state", "s", "--slot", "1"]).is_err());
     }
 
     #[test]
     fn window_modes_conflict_pairwise() {
-        assert!(parse(&["--size", "1x1", "--scale", "2"]).is_err());
-        assert!(parse(&["--size", "1x1", "--fullscreen"]).is_err());
-        assert!(parse(&["--scale", "2", "--fullscreen"]).is_err());
+        assert!(parse_rom(&["--size", "1x1", "--scale", "2"]).is_err());
+        assert!(parse_rom(&["--size", "1x1", "--fullscreen"]).is_err());
+        assert!(parse_rom(&["--scale", "2", "--fullscreen"]).is_err());
     }
 
     #[test]
     fn size_parses_and_maps_to_window_mode() {
-        let cli = parse(&["--size", "1600x1440"]).unwrap();
+        let cli = parse_rom(&["--size", "1600x1440"]).unwrap();
         assert_eq!(
             cli.window_mode(),
             WindowMode::Exact(Size {
@@ -286,42 +345,70 @@ mod tests {
                 height: 1440
             })
         );
-        assert!(parse(&["--size", "1600"]).is_err());
-        assert!(parse(&["--size", "0x10"]).is_err());
+        assert!(parse_rom(&["--size", "1600"]).is_err());
+        assert!(parse_rom(&["--size", "0x10"]).is_err());
     }
 
     #[test]
     fn scale_and_fullscreen_map_to_window_modes() {
         assert_eq!(
-            parse(&["--scale", "4"]).unwrap().window_mode(),
+            parse_rom(&["--scale", "4"]).unwrap().window_mode(),
             WindowMode::Scale(4)
         );
         assert_eq!(
-            parse(&["--fullscreen"]).unwrap().window_mode(),
+            parse_rom(&["--fullscreen"]).unwrap().window_mode(),
             WindowMode::Fullscreen
         );
     }
 
     #[test]
     fn settle_rejects_negative_and_nan() {
-        assert!(parse(&["--settle=-1"]).is_err());
-        assert!(parse(&["--settle=nan"]).is_err());
-        assert_eq!(parse(&["--settle", "2.5"]).unwrap().settle, 2.5);
+        assert!(parse_rom(&["--settle=-1"]).is_err());
+        assert!(parse_rom(&["--settle=nan"]).is_err());
+        assert_eq!(parse_rom(&["--settle", "2.5"]).unwrap().settle, 2.5);
     }
 
     #[test]
     fn frames_rejects_zero() {
-        assert!(parse(&["--frames", "0"]).is_err());
-        assert_eq!(parse(&["--frames", "1"]).unwrap().frames, 1);
+        assert!(parse_rom(&["--frames", "0"]).is_err());
+        assert_eq!(parse_rom(&["--frames", "1"]).unwrap().frames, 1);
     }
 
     #[test]
     fn advance_and_cmd_port_defaults_and_validation() {
-        let cli = parse(&[]).unwrap();
+        let cli = parse_rom(&[]).unwrap();
         assert_eq!(cli.advance, 1);
         assert_eq!(cli.cmd_port, 55355);
-        assert!(parse(&["--advance", "0"]).is_err());
-        assert_eq!(parse(&["--advance", "12"]).unwrap().advance, 12);
-        assert_eq!(parse(&["--cmd-port", "60000"]).unwrap().cmd_port, 60000);
+        assert!(parse_rom(&["--advance", "0"]).is_err());
+        assert_eq!(parse_rom(&["--advance", "12"]).unwrap().advance, 12);
+        assert_eq!(parse_rom(&["--cmd-port", "60000"]).unwrap().cmd_port, 60000);
+    }
+
+    #[test]
+    fn image_mode_parses_alone_and_conflicts_with_emulator_flags() {
+        let cli = parse_raw(&["--image", "sample.png"]).unwrap();
+        assert_eq!(cli.image, Some(PathBuf::from("sample.png")));
+        assert!(cli.core.is_none() && cli.rom.is_none());
+        assert!(parse_raw(&["--image", "s.png", "--core", "c"]).is_err());
+        assert!(parse_raw(&["--image", "s.png", "--rom", "r"]).is_err());
+        assert!(parse_raw(&["--image", "s.png", "--state", "x"]).is_err());
+        assert!(parse_raw(&["--image", "s.png", "--slot", "1"]).is_err());
+        assert!(parse_raw(&["--image", "s.png", "--advance", "2"]).is_err());
+    }
+
+    #[test]
+    fn core_and_rom_are_required_together_without_image() {
+        assert!(parse_raw(&[]).is_err());
+        assert!(parse_raw(&["--core", "c"]).is_err());
+        assert!(parse_raw(&["--rom", "r"]).is_err());
+        assert!(parse_raw(&["--core", "c", "--rom", "r"]).is_ok());
+    }
+
+    #[test]
+    fn image_extension_check() {
+        assert!(is_image_path(Path::new("a.PNG")));
+        assert!(is_image_path(Path::new("b.jpeg")));
+        assert!(!is_image_path(Path::new("c.gbc")));
+        assert!(!is_image_path(Path::new("noext")));
     }
 }

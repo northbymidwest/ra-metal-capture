@@ -9,8 +9,8 @@ use std::process::Command;
 #[derive(Debug, Clone)]
 pub struct LaunchPlan {
     pub binary: PathBuf,
-    pub core: PathBuf,
-    pub rom: PathBuf,
+    pub core: Option<PathBuf>,
+    pub content: PathBuf,
     pub shader: Option<PathBuf>,
     pub appendconfig: PathBuf,
     pub fullscreen: bool,
@@ -26,12 +26,14 @@ pub struct LaunchCommand {
 }
 
 /// Pure assembly of the RetroArch invocation.
-/// Order: `-L <core> [-f] [--set-shader <p>] --appendconfig <cfg> [-v] <rom>`.
+/// Order: `[-L <core>] [-f] [--set-shader <p>] --appendconfig <cfg> [-v] <content>`.
 /// Env: `MTL_CAPTURE_ENABLED=1` so GPUToolsCapture loads into RetroArch.
 pub fn build_command(plan: &LaunchPlan) -> LaunchCommand {
     let mut args: Vec<OsString> = Vec::new();
-    args.push("-L".into());
-    args.push(plan.core.as_os_str().into());
+    if let Some(core) = &plan.core {
+        args.push("-L".into());
+        args.push(core.as_os_str().into());
+    }
     if plan.fullscreen {
         args.push("-f".into());
     }
@@ -44,7 +46,7 @@ pub fn build_command(plan: &LaunchPlan) -> LaunchCommand {
     if plan.verbose {
         args.push("-v".into());
     }
-    args.push(plan.rom.as_os_str().into());
+    args.push(plan.content.as_os_str().into());
     LaunchCommand {
         program: plan.binary.clone(),
         args,
@@ -83,8 +85,8 @@ mod tests {
     fn plan() -> LaunchPlan {
         LaunchPlan {
             binary: PathBuf::from("/Applications/RetroArch.app/Contents/MacOS/RetroArch"),
-            core: PathBuf::from("/cores/sameboy_libretro.dylib"),
-            rom: PathBuf::from("/roms/z.gb"),
+            core: Some(PathBuf::from("/cores/sameboy_libretro.dylib")),
+            content: PathBuf::from("/roms/z.gb"),
             shader: None,
             appendconfig: PathBuf::from("/tmp/run/append.cfg"),
             fullscreen: false,
@@ -150,5 +152,16 @@ mod tests {
             "{s}"
         );
         assert!(s.ends_with("\"/roms/z.gb\""), "{s}");
+    }
+
+    #[test]
+    fn image_content_has_no_core_flag() {
+        let mut p = plan();
+        p.core = None;
+        p.content = PathBuf::from("/img/sample.png");
+        assert_eq!(
+            strs(&build_command(&p)),
+            ["--appendconfig", "/tmp/run/append.cfg", "/img/sample.png"]
+        );
     }
 }

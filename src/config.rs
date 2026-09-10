@@ -77,6 +77,9 @@ pub struct AppendConfig {
     /// Configuration for paused capture mode; `None` means the settle flow
     /// is used instead, and no command port is enabled in the appendconfig.
     pub paused: Option<PausedConfig>,
+    /// Whether this run loads a static image through RetroArch's built-in
+    /// image viewer core rather than a game core.
+    pub image_viewer: bool,
 }
 
 impl AppendConfig {
@@ -124,6 +127,9 @@ impl AppendConfig {
             lines.push(("network_cmd_enable", "true".into()));
             lines.push(("network_cmd_port", paused.port.to_string()));
             lines.push(("state_slot", paused.slot.to_string()));
+        }
+        if self.image_viewer {
+            lines.push(("builtin_imageviewer_enable", "true".into()));
         }
         lines
             .into_iter()
@@ -191,6 +197,7 @@ video_font_enable = \"false\"\n";
             },
             staged_states_dir: None,
             paused: None,
+            image_viewer: false,
         };
         let expected = format!(
             "{COMMON}video_fullscreen = \"false\"\n\
@@ -211,6 +218,7 @@ video_window_auto_height_max = \"1382\"\n"
             }),
             staged_states_dir: None,
             paused: None,
+            image_viewer: false,
         };
         let expected = format!(
             "{COMMON}video_fullscreen = \"false\"\n\
@@ -227,6 +235,7 @@ video_windowed_position_height = \"1440\"\n"
             window: WindowMode::Scale(4),
             staged_states_dir: None,
             paused: None,
+            image_viewer: false,
         };
         let expected = format!(
             "{COMMON}video_fullscreen = \"false\"\n\
@@ -246,6 +255,7 @@ video_fullscreen_y = \"0\"\n"
             window: WindowMode::Fullscreen,
             staged_states_dir: None,
             paused: None,
+            image_viewer: false,
         };
         assert_eq!(cfg.render(), COMMON);
     }
@@ -261,6 +271,7 @@ video_fullscreen_y = \"0\"\n"
             },
             staged_states_dir: Some(PathBuf::from("/tmp/x/states")),
             paused: None,
+            image_viewer: false,
         };
         let expected = format!(
             "{COMMON}video_fullscreen = \"false\"\n\
@@ -282,6 +293,7 @@ savestates_in_content_dir = \"false\"\n"
             window: WindowMode::Fullscreen,
             staged_states_dir: Some(PathBuf::from("/tmp/x/states")),
             paused: None,
+            image_viewer: false,
         };
         let expected = format!(
             "{COMMON}savestate_directory = \"/tmp/x/states\"\n\
@@ -301,6 +313,7 @@ savestates_in_content_dir = \"false\"\n"
                 port: 55355,
                 slot: 0,
             }),
+            image_viewer: false,
         };
         let expected = format!(
             "{COMMON}savestate_directory = \"/tmp/x/states\"\n\
@@ -323,6 +336,7 @@ state_slot = \"0\"\n"
                 port: 60000,
                 slot: 3,
             }),
+            image_viewer: false,
         };
         let expected = format!(
             "{COMMON}network_cmd_enable = \"true\"\n\
@@ -330,5 +344,19 @@ network_cmd_port = \"60000\"\n\
 state_slot = \"3\"\n"
         );
         assert_eq!(cfg.render(), expected);
+    }
+
+    #[test]
+    fn render_image_viewer_key_last() {
+        let cfg = AppendConfig {
+            window: WindowMode::Fullscreen,
+            staged_states_dir: None,
+            paused: None,
+            image_viewer: true,
+        };
+        assert_eq!(
+            cfg.render(),
+            format!("{COMMON}builtin_imageviewer_enable = \"true\"\n")
+        );
     }
 }
