@@ -11,14 +11,14 @@ use clap::Parser;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use config::{AppendConfig, WindowMode};
+use config::{AppendConfig, Size, WindowMode};
 use launch::{LaunchPlan, build_command};
 
 fn default_config() -> PathBuf {
     config::expand_tilde("~/Library/Application Support/RetroArch/config/retroarch.cfg")
 }
 
-fn parse_size(s: &str) -> std::result::Result<(u32, u32), String> {
+fn parse_size(s: &str) -> std::result::Result<Size, String> {
     let (w, h) = s
         .split_once('x')
         .ok_or_else(|| format!("expected WxH, got {s:?}"))?;
@@ -27,7 +27,7 @@ fn parse_size(s: &str) -> std::result::Result<(u32, u32), String> {
     if w == 0 || h == 0 {
         return Err("width and height must be non-zero".into());
     }
-    Ok((w, h))
+    Ok(Size { width: w, height: h })
 }
 
 fn parse_settle(s: &str) -> std::result::Result<f64, String> {
@@ -73,7 +73,7 @@ struct Cli {
 
     /// Exact window size in points, e.g. 1600x1440
     #[arg(long, value_parser = parse_size, conflicts_with_all = ["scale", "fullscreen"])]
-    size: Option<(u32, u32)>,
+    size: Option<Size>,
 
     /// Integer scale of the core's native resolution
     #[arg(long, conflicts_with_all = ["size", "fullscreen"])]
@@ -108,8 +108,8 @@ impl Cli {
     fn window_mode(&self) -> WindowMode {
         if self.fullscreen {
             WindowMode::Fullscreen
-        } else if let Some((width, height)) = self.size {
-            WindowMode::Size { width, height }
+        } else if let Some(size) = self.size {
+            WindowMode::Exact(size)
         } else if let Some(n) = self.scale {
             WindowMode::Scale(n)
         } else {
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn size_parses_and_maps_to_window_mode() {
         let cli = parse(&["--size", "1600x1440"]).unwrap();
-        assert_eq!(cli.window_mode(), WindowMode::Size { width: 1600, height: 1440 });
+        assert_eq!(cli.window_mode(), WindowMode::Exact(Size { width: 1600, height: 1440 }));
         assert!(parse(&["--size", "1600"]).is_err());
         assert!(parse(&["--size", "0x10"]).is_err());
     }

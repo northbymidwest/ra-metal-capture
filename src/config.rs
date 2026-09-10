@@ -37,13 +37,20 @@ pub fn read_keys(text: &str, keys: &[&str]) -> HashMap<String, String> {
     out
 }
 
+/// A width and height in points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Size {
+    pub width: u32,
+    pub height: u32,
+}
+
 /// How the RetroArch window is sized for the run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WindowMode {
-    /// Windowed, scaled up and then clamped to these maxima (points).
-    Fill { max_width: u32, max_height: u32 },
+    /// Windowed, scaled up and then clamped to this maximum (points).
+    Fill { max: Size },
     /// Windowed, exactly this size (points).
-    Size { width: u32, height: u32 },
+    Exact(Size),
     /// Windowed, an integer multiple of the core's native resolution, unclamped.
     Scale(u32),
     /// `-f` on the command line; nothing in the config.
@@ -70,18 +77,18 @@ impl AppendConfig {
             ("video_font_enable", "false".into()),
         ];
         match &self.window {
-            WindowMode::Fill { max_width, max_height } => {
+            WindowMode::Fill { max } => {
                 lines.push(("video_fullscreen", "false".into()));
                 lines.push(("video_window_save_positions", "false".into()));
                 lines.push(("video_scale", "20".into()));
-                lines.push(("video_window_auto_width_max", max_width.to_string()));
-                lines.push(("video_window_auto_height_max", max_height.to_string()));
+                lines.push(("video_window_auto_width_max", max.width.to_string()));
+                lines.push(("video_window_auto_height_max", max.height.to_string()));
             }
-            WindowMode::Size { width, height } => {
+            WindowMode::Exact(size) => {
                 lines.push(("video_fullscreen", "false".into()));
                 lines.push(("video_window_save_positions", "true".into()));
-                lines.push(("video_windowed_position_width", width.to_string()));
-                lines.push(("video_windowed_position_height", height.to_string()));
+                lines.push(("video_windowed_position_width", size.width.to_string()));
+                lines.push(("video_windowed_position_height", size.height.to_string()));
             }
             WindowMode::Scale(n) => {
                 lines.push(("video_fullscreen", "false".into()));
@@ -158,7 +165,7 @@ video_font_enable = \"false\"\n";
     #[test]
     fn render_fill_mode() {
         let cfg = AppendConfig {
-            window: WindowMode::Fill { max_width: 2488, max_height: 1382 },
+            window: WindowMode::Fill { max: Size { width: 2488, height: 1382 } },
             staged_states_dir: None,
         };
         let expected = format!(
@@ -174,7 +181,7 @@ video_window_auto_height_max = \"1382\"\n"
     #[test]
     fn render_size_mode() {
         let cfg = AppendConfig {
-            window: WindowMode::Size { width: 1600, height: 1440 },
+            window: WindowMode::Exact(Size { width: 1600, height: 1440 }),
             staged_states_dir: None,
         };
         let expected = format!(
@@ -216,7 +223,7 @@ video_fullscreen_y = \"0\"\n"
     #[test]
     fn render_fill_mode_with_staged_states_dir() {
         let cfg = AppendConfig {
-            window: WindowMode::Fill { max_width: 2488, max_height: 1382 },
+            window: WindowMode::Fill { max: Size { width: 2488, height: 1382 } },
             staged_states_dir: Some(PathBuf::from("/tmp/x/states")),
         };
         let expected = format!(

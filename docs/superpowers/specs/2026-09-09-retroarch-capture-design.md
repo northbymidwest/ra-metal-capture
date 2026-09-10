@@ -97,6 +97,11 @@ two keep the "Load Content" start animation and every on-screen text
 notification (state loaded, controller autoconfig, and so on) out of the
 captured frame; `video_font_enable` disables all OSD text for the run.
 
+A width and height are always carried together as `Size { width, height }`
+rather than a bare tuple, so call sites can't swap them by accident.
+`WindowMode` names its two sized variants accordingly: `Fill { max: Size }`
+for the clamped scale-to-fit mode, and `Exact(Size)` for `--size WxH`.
+
 Window mode adds:
 
 - Fill (default): `video_fullscreen = "false"`,
@@ -136,7 +141,7 @@ savestates_in_content_dir = "false"
 
 ### `display` - main display size
 
-`visible_size() -> (u32, u32)` via `objc2-app-kit` `NSScreen::mainScreen`
+`visible_size() -> Size` via `objc2-app-kit` `NSScreen::mainScreen`
 `visibleFrame`. Falls back to 1920x1080 with a warning if no screen is found.
 
 ### `state` - staging the save state
