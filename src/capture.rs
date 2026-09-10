@@ -169,7 +169,13 @@ fn prepare_output(output: &Path) -> Result<()> {
 /// for a boundary. gpucapture flushes that line even into a pipe (measured).
 fn gpucapture_start(pid: u32, frames: u32, output: &Path, on_armed: impl FnOnce()) -> Result<()> {
     let mut child = Command::new("gpucapture")
-        .args(["start", "--pid", &pid.to_string(), "--count", &frames.to_string()])
+        .args([
+            "start",
+            "--pid",
+            &pid.to_string(),
+            "--count",
+            &frames.to_string(),
+        ])
         .arg("--output")
         .arg(output)
         .stdout(Stdio::piped())

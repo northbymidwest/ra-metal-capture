@@ -64,7 +64,12 @@ impl LaunchCommand {
             .iter()
             .map(|a| format!("{:?}", a.to_string_lossy()))
             .collect();
-        format!("{} {} {}", env.join(" "), self.program.display(), args.join(" "))
+        format!(
+            "{} {} {}",
+            env.join(" "),
+            self.program.display(),
+            args.join(" ")
+        )
     }
 }
 
@@ -85,7 +90,10 @@ mod tests {
     }
 
     fn strs(cmd: &LaunchCommand) -> Vec<String> {
-        cmd.args.iter().map(|a| a.to_string_lossy().into_owned()).collect()
+        cmd.args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
     }
 
     #[test]
@@ -95,12 +103,17 @@ mod tests {
         assert_eq!(
             strs(&cmd),
             [
-                "-L", "/cores/sameboy_libretro.dylib",
-                "--appendconfig", "/tmp/run/append.cfg",
+                "-L",
+                "/cores/sameboy_libretro.dylib",
+                "--appendconfig",
+                "/tmp/run/append.cfg",
                 "/roms/z.gb",
             ]
         );
-        assert_eq!(cmd.env, vec![("MTL_CAPTURE_ENABLED".to_string(), "1".to_string())]);
+        assert_eq!(
+            cmd.env,
+            vec![("MTL_CAPTURE_ENABLED".to_string(), "1".to_string())]
+        );
     }
 
     #[test]
@@ -113,10 +126,13 @@ mod tests {
         assert_eq!(
             strs(&cmd),
             [
-                "-L", "/cores/sameboy_libretro.dylib",
+                "-L",
+                "/cores/sameboy_libretro.dylib",
                 "-f",
-                "--set-shader", "/shaders/crt.slangp",
-                "--appendconfig", "/tmp/run/append.cfg",
+                "--set-shader",
+                "/shaders/crt.slangp",
+                "--appendconfig",
+                "/tmp/run/append.cfg",
                 "-v",
                 "/roms/z.gb",
             ]
@@ -126,7 +142,10 @@ mod tests {
     #[test]
     fn display_shows_env_program_and_quoted_args() {
         let s = build_command(&plan()).display();
-        assert!(s.starts_with("MTL_CAPTURE_ENABLED=1 /Applications/RetroArch.app"), "{s}");
+        assert!(
+            s.starts_with("MTL_CAPTURE_ENABLED=1 /Applications/RetroArch.app"),
+            "{s}"
+        );
         assert!(s.ends_with("\"/roms/z.gb\""), "{s}");
     }
 }

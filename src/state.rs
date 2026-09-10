@@ -8,12 +8,10 @@ pub fn stage(state: &Path, rom: &Path, states_dir: &Path) -> Result<u32> {
     let stem = rom
         .file_stem()
         .with_context(|| format!("ROM path {} has no file name", rom.display()))?;
-    fs::create_dir_all(states_dir)
-        .with_context(|| format!("creating {}", states_dir.display()))?;
+    fs::create_dir_all(states_dir).with_context(|| format!("creating {}", states_dir.display()))?;
     let dest = states_dir.join(format!("{}.state", stem.to_string_lossy()));
-    fs::copy(state, &dest).with_context(|| {
-        format!("copying state {} to {}", state.display(), dest.display())
-    })?;
+    fs::copy(state, &dest)
+        .with_context(|| format!("copying state {} to {}", state.display(), dest.display()))?;
     Ok(0)
 }
 

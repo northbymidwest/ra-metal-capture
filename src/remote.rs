@@ -69,9 +69,10 @@ impl Remote {
     pub fn status(&self) -> Result<Status> {
         self.send("GET_STATUS")?;
         let mut buf = [0u8; 1024];
-        let n = self.socket.recv(&mut buf).context(
-            "no reply to GET_STATUS; is network_cmd_enable on and the port free?",
-        )?;
+        let n = self
+            .socket
+            .recv(&mut buf)
+            .context("no reply to GET_STATUS; is network_cmd_enable on and the port free?")?;
         Ok(parse_status(&String::from_utf8_lossy(&buf[..n])))
     }
 
@@ -178,7 +179,11 @@ mod tests {
                         socket.send_to(msg.as_bytes(), src).unwrap();
                     }
                     "PAUSE_TOGGLE" => {
-                        state = if state == "PAUSED" { "PLAYING".into() } else { "PAUSED".into() };
+                        state = if state == "PAUSED" {
+                            "PLAYING".into()
+                        } else {
+                            "PAUSED".into()
+                        };
                     }
                     _ => {}
                 }
@@ -193,10 +198,19 @@ mod tests {
 
     #[test]
     fn parses_status_replies() {
-        assert_eq!(parse_status("GET_STATUS PLAYING game_boy,Zelda,crc32=1"), Status::Playing);
-        assert_eq!(parse_status("GET_STATUS PAUSED game_boy,Zelda,crc32=1"), Status::Paused);
+        assert_eq!(
+            parse_status("GET_STATUS PLAYING game_boy,Zelda,crc32=1"),
+            Status::Playing
+        );
+        assert_eq!(
+            parse_status("GET_STATUS PAUSED game_boy,Zelda,crc32=1"),
+            Status::Paused
+        );
         assert_eq!(parse_status("GET_STATUS CONTENTLESS"), Status::Contentless);
-        assert_eq!(parse_status("GET_STATUS ERROR"), Status::Other("GET_STATUS ERROR".into()));
+        assert_eq!(
+            parse_status("GET_STATUS ERROR"),
+            Status::Other("GET_STATUS ERROR".into())
+        );
         assert_eq!(parse_status("garbage"), Status::Other("garbage".into()));
     }
 
@@ -226,7 +240,10 @@ mod tests {
     fn wait_playing_times_out_while_contentless() {
         let f = fake("CONTENTLESS", true);
         let r = Remote::connect(f.port).unwrap();
-        let err = r.wait_playing(Duration::from_millis(500)).unwrap_err().to_string();
+        let err = r
+            .wait_playing(Duration::from_millis(500))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("CONTENTLESS"), "{err}");
     }
 
@@ -271,7 +288,10 @@ mod tests {
 
         let stranger = UdpSocket::bind("127.0.0.1:0").unwrap();
         stranger
-            .send_to(b"GET_STATUS PLAYING game_boy,Zelda,crc32=0", ("127.0.0.1", local_port))
+            .send_to(
+                b"GET_STATUS PLAYING game_boy,Zelda,crc32=0",
+                ("127.0.0.1", local_port),
+            )
             .unwrap();
 
         // The connected socket only accepts datagrams from the fake
@@ -291,7 +311,14 @@ mod tests {
         r.quit().unwrap();
         sleep(Duration::from_millis(50));
         let got = received(&f);
-        let commands: Vec<&str> = got.iter().map(String::as_str).filter(|c| *c != "GET_STATUS").collect();
-        assert_eq!(commands, ["PAUSE_TOGGLE", "LOAD_STATE", "FRAMEADVANCE", "QUIT", "QUIT"]);
+        let commands: Vec<&str> = got
+            .iter()
+            .map(String::as_str)
+            .filter(|c| *c != "GET_STATUS")
+            .collect();
+        assert_eq!(
+            commands,
+            ["PAUSE_TOGGLE", "LOAD_STATE", "FRAMEADVANCE", "QUIT", "QUIT"]
+        );
     }
 }

@@ -180,7 +180,12 @@ video_font_enable = \"false\"\n";
     #[test]
     fn render_fill_mode() {
         let cfg = AppendConfig {
-            window: WindowMode::Fill { max: Size { width: 2488, height: 1382 } },
+            window: WindowMode::Fill {
+                max: Size {
+                    width: 2488,
+                    height: 1382,
+                },
+            },
             staged_states_dir: None,
             paused: None,
         };
@@ -197,7 +202,10 @@ video_window_auto_height_max = \"1382\"\n"
     #[test]
     fn render_size_mode() {
         let cfg = AppendConfig {
-            window: WindowMode::Exact(Size { width: 1600, height: 1440 }),
+            window: WindowMode::Exact(Size {
+                width: 1600,
+                height: 1440,
+            }),
             staged_states_dir: None,
             paused: None,
         };
@@ -242,7 +250,12 @@ video_fullscreen_y = \"0\"\n"
     #[test]
     fn render_fill_mode_with_staged_states_dir() {
         let cfg = AppendConfig {
-            window: WindowMode::Fill { max: Size { width: 2488, height: 1382 } },
+            window: WindowMode::Fill {
+                max: Size {
+                    width: 2488,
+                    height: 1382,
+                },
+            },
             staged_states_dir: Some(PathBuf::from("/tmp/x/states")),
             paused: None,
         };
@@ -281,7 +294,10 @@ savestates_in_content_dir = \"false\"\n"
         let cfg = AppendConfig {
             window: WindowMode::Fullscreen,
             staged_states_dir: Some(PathBuf::from("/tmp/x/states")),
-            paused: Some(PausedConfig { port: 55355, slot: 0 }),
+            paused: Some(PausedConfig {
+                port: 55355,
+                slot: 0,
+            }),
         };
         let expected = format!(
             "{COMMON}savestate_directory = \"/tmp/x/states\"\n\
@@ -300,7 +316,10 @@ state_slot = \"0\"\n"
         let cfg = AppendConfig {
             window: WindowMode::Fullscreen,
             staged_states_dir: None,
-            paused: Some(PausedConfig { port: 60000, slot: 3 }),
+            paused: Some(PausedConfig {
+                port: 60000,
+                slot: 3,
+            }),
         };
         let expected = format!(
             "{COMMON}network_cmd_enable = \"true\"\n\

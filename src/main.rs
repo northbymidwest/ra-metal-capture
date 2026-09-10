@@ -28,13 +28,18 @@ fn parse_size(s: &str) -> std::result::Result<Size, String> {
     if w == 0 || h == 0 {
         return Err("width and height must be non-zero".into());
     }
-    Ok(Size { width: w, height: h })
+    Ok(Size {
+        width: w,
+        height: h,
+    })
 }
 
 fn parse_settle(s: &str) -> std::result::Result<f64, String> {
     let v: f64 = s.parse().map_err(|_| format!("not a number: {s:?}"))?;
     if !v.is_finite() || v < 0.0 {
-        return Err(format!("settle must be a non-negative, finite number of seconds, got {s:?}"));
+        return Err(format!(
+            "settle must be a non-negative, finite number of seconds, got {s:?}"
+        ));
     }
     Ok(v)
 }
@@ -168,9 +173,21 @@ fn run(cli: Cli) -> Result<()> {
         (Some(state_file), _) => {
             let dir = tmp.path().join("states");
             let slot = state::stage(state_file, &cli.rom, &dir)?;
-            (Some(PausedConfig { port: cli.cmd_port, slot }), Some(dir))
+            (
+                Some(PausedConfig {
+                    port: cli.cmd_port,
+                    slot,
+                }),
+                Some(dir),
+            )
         }
-        (None, Some(slot)) => (Some(PausedConfig { port: cli.cmd_port, slot }), None),
+        (None, Some(slot)) => (
+            Some(PausedConfig {
+                port: cli.cmd_port,
+                slot,
+            }),
+            None,
+        ),
         (None, None) => (None, None),
     };
 
@@ -202,7 +219,10 @@ fn run(cli: Cli) -> Result<()> {
     let output = std::path::absolute(&cli.output)
         .with_context(|| format!("resolving {}", cli.output.display()))?;
     let trigger = match paused {
-        Some(p) => capture::Trigger::Paused { port: p.port, advance: cli.advance },
+        Some(p) => capture::Trigger::Paused {
+            port: p.port,
+            advance: cli.advance,
+        },
         None => capture::Trigger::Settle(Duration::from_secs_f64(cli.settle)),
     };
     let opts = capture::CaptureOptions {
@@ -229,7 +249,15 @@ mod tests {
     use super::*;
 
     fn parse(args: &[&str]) -> std::result::Result<Cli, clap::Error> {
-        let mut full = vec!["ra-metal-capture", "--core", "c", "--rom", "r", "--output", "o"];
+        let mut full = vec![
+            "ra-metal-capture",
+            "--core",
+            "c",
+            "--rom",
+            "r",
+            "--output",
+            "o",
+        ];
         full.extend_from_slice(args);
         Cli::try_parse_from(full)
     }
@@ -258,15 +286,27 @@ mod tests {
     #[test]
     fn size_parses_and_maps_to_window_mode() {
         let cli = parse(&["--size", "1600x1440"]).unwrap();
-        assert_eq!(cli.window_mode(), WindowMode::Exact(Size { width: 1600, height: 1440 }));
+        assert_eq!(
+            cli.window_mode(),
+            WindowMode::Exact(Size {
+                width: 1600,
+                height: 1440
+            })
+        );
         assert!(parse(&["--size", "1600"]).is_err());
         assert!(parse(&["--size", "0x10"]).is_err());
     }
 
     #[test]
     fn scale_and_fullscreen_map_to_window_modes() {
-        assert_eq!(parse(&["--scale", "4"]).unwrap().window_mode(), WindowMode::Scale(4));
-        assert_eq!(parse(&["--fullscreen"]).unwrap().window_mode(), WindowMode::Fullscreen);
+        assert_eq!(
+            parse(&["--scale", "4"]).unwrap().window_mode(),
+            WindowMode::Scale(4)
+        );
+        assert_eq!(
+            parse(&["--fullscreen"]).unwrap().window_mode(),
+            WindowMode::Fullscreen
+        );
     }
 
     #[test]

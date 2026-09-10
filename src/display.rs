@@ -5,7 +5,10 @@ use objc2_foundation::MainThreadMarker;
 /// Allowance for the window title bar, which the visible frame does not exclude.
 pub const TITLE_BAR_POINTS: u32 = 28;
 
-const FALLBACK: Size = Size { width: 1920, height: 1080 };
+const FALLBACK: Size = Size {
+    width: 1920,
+    height: 1080,
+};
 
 /// Width and height in points of the main display's visible frame
 /// (excludes the menu bar and dock). Falls back to 1920x1080 with a
@@ -20,7 +23,10 @@ pub fn visible_size() -> Size {
         return FALLBACK;
     };
     let frame = screen.visibleFrame();
-    Size { width: frame.size.width as u32, height: frame.size.height as u32 }
+    Size {
+        width: frame.size.width as u32,
+        height: frame.size.height as u32,
+    }
 }
 
 /// The fill-the-screen window mode for a given visible size.
@@ -40,16 +46,32 @@ mod tests {
     #[test]
     fn fill_mode_subtracts_title_bar() {
         assert_eq!(
-            fill_mode(Size { width: 2488, height: 1410 }),
-            WindowMode::Fill { max: Size { width: 2488, height: 1382 } }
+            fill_mode(Size {
+                width: 2488,
+                height: 1410
+            }),
+            WindowMode::Fill {
+                max: Size {
+                    width: 2488,
+                    height: 1382
+                }
+            }
         );
     }
 
     #[test]
     fn fill_mode_saturates_on_tiny_heights() {
         assert_eq!(
-            fill_mode(Size { width: 100, height: 10 }),
-            WindowMode::Fill { max: Size { width: 100, height: 0 } }
+            fill_mode(Size {
+                width: 100,
+                height: 10
+            }),
+            WindowMode::Fill {
+                max: Size {
+                    width: 100,
+                    height: 0
+                }
+            }
         );
     }
 }
