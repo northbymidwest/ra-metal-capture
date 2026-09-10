@@ -1,3 +1,5 @@
+//! Resolving a libretro core argument to a `.dylib` path.
+
 use anyhow::{Result, bail};
 use std::path::{Path, PathBuf};
 

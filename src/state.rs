@@ -1,3 +1,5 @@
+//! Staging a save state file where RetroArch will find it as slot 0.
+
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;

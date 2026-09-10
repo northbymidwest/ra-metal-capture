@@ -1,3 +1,6 @@
+//! Reading keys from a `retroarch.cfg` and rendering the per-run
+//! appendconfig that overrides it for one launch.
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 

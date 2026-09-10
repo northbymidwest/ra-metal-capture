@@ -1,3 +1,5 @@
+//! Resolving the RetroArch binary to exec from an `.app` bundle path.
+
 use anyhow::{Result, bail};
 use std::path::{Path, PathBuf};
 

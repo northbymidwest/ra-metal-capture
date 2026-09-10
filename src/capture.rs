@@ -1,3 +1,7 @@
+//! The capture itself: waiting for RetroArch to become capturable, arming
+//! Xcode's `gpucapture(1)`, driving the paused frame-advance flow, and
+//! shutting RetroArch down afterwards (or killing it on any failure).
+
 use crate::launch::LaunchCommand;
 use crate::remote::Remote;
 use anyhow::{Context, Result, bail};
@@ -79,6 +83,8 @@ pub enum Trigger {
     Paused { port: u16, advance: u32 },
 }
 
+/// Everything [`run`] needs beyond the command line: the trigger, how many
+/// frame boundaries to record, where to write, and timeouts.
 pub struct CaptureOptions {
     /// What to wait for before capturing.
     pub trigger: Trigger,

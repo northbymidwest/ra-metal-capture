@@ -1,3 +1,6 @@
+//! The main display's visible size, for the default fill-the-screen window
+//! mode. Queries AppKit; falls back to 1920x1080 off the main thread.
+
 use crate::config::{Size, WindowMode};
 use objc2_app_kit::NSScreen;
 use objc2_foundation::MainThreadMarker;

@@ -1,3 +1,6 @@
+//! Assembling the RetroArch command line and environment from a
+//! [`LaunchPlan`].
+
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::Command;

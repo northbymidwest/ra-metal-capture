@@ -2,6 +2,15 @@
 
 Notable changes per release. Dates are the publish date.
 
+## 0.1.1 - 2026-09-10
+
+### Added
+
+- A library target, `ra_metal_capture`, exposing the modules the binary is
+  built from, with a docs.rs configuration that documents the Apple target.
+  docs.rs only documents library targets, so 0.1.0 had no documentation
+  build.
+
 ## 0.1.0 - 2026-09-10
 
 ### Added

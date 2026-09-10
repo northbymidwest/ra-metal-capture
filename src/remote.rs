@@ -42,6 +42,7 @@ pub fn parse_status(reply: &str) -> Status {
     }
 }
 
+/// A connected UDP socket to one RetroArch process's command port.
 pub struct Remote {
     socket: UdpSocket,
 }

@@ -1,19 +1,12 @@
-mod app;
-mod capture;
-mod config;
-mod core;
-mod display;
-mod launch;
-mod remote;
-mod state;
+#![deny(unsafe_code)]
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
+use ra_metal_capture::config::{self, AppendConfig, PausedConfig, Size, WindowMode};
+use ra_metal_capture::launch::{LaunchPlan, build_command};
+use ra_metal_capture::{app, capture, core, display, remote, state};
 use std::path::PathBuf;
 use std::time::Duration;
-
-use config::{AppendConfig, PausedConfig, Size, WindowMode};
-use launch::{LaunchPlan, build_command};
 
 fn default_config() -> PathBuf {
     config::expand_tilde("~/Library/Application Support/RetroArch/config/retroarch.cfg")

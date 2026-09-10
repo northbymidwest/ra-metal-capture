@@ -1,6 +1,6 @@
 [package]
 name = "ra-metal-capture"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.98"
 description = "Launch RetroArch with a ROM, save state and shader preset, then capture frames to .gputrace with gpucapture"
@@ -20,6 +20,20 @@ exclude = [
     "/typos.toml",
     "/RELEASING.md",
 ]
+
+# docs.rs builds on Linux; this crate links AppKit through objc2-app-kit,
+# which only the Apple targets provide. Document the Apple target only.
+[package.metadata.docs.rs]
+default-target = "aarch64-apple-darwin"
+targets = ["aarch64-apple-darwin"]
+
+[lib]
+name = "ra_metal_capture"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ra-metal-capture"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.104"
