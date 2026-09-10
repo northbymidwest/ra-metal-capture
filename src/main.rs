@@ -12,7 +12,7 @@ use clap::Parser;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use config::{AppendConfig, Size, WindowMode};
+use config::{AppendConfig, PausedConfig, Size, WindowMode};
 use launch::{LaunchPlan, build_command};
 
 fn default_config() -> PathBuf {
@@ -84,9 +84,17 @@ struct Cli {
     #[arg(long, conflicts_with_all = ["size", "scale"])]
     fullscreen: bool,
 
-    /// Seconds to wait after RetroArch is capturable before capturing
+    /// Seconds to wait before capturing when no state is given
     #[arg(long, default_value_t = 5.0, value_parser = parse_settle)]
     settle: f64,
+
+    /// Frames to run after loading the state; the Nth frame is the one captured
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+    advance: u32,
+
+    /// UDP port for RetroArch's command interface (enabled only for this run)
+    #[arg(long, default_value_t = 55355)]
+    cmd_port: u16,
 
     /// Number of frame boundaries to capture
     #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
@@ -150,20 +158,20 @@ fn run(cli: Cli) -> Result<()> {
         .tempdir()
         .context("creating temp dir")?;
 
-    let (slot, staged_states_dir) = match (&cli.state, cli.slot) {
+    let (paused, staged_states_dir) = match (&cli.state, cli.slot) {
         (Some(state_file), _) => {
             let dir = tmp.path().join("states");
             let slot = state::stage(state_file, &cli.rom, &dir)?;
-            (Some(slot), Some(dir))
+            (Some(PausedConfig { port: cli.cmd_port, slot }), Some(dir))
         }
-        (None, Some(n)) => (Some(n), None),
+        (None, Some(slot)) => (Some(PausedConfig { port: cli.cmd_port, slot }), None),
         (None, None) => (None, None),
     };
 
     let append = AppendConfig {
         window: cli.window_mode(),
         staged_states_dir,
-        paused: None,
+        paused,
     };
     let appendconfig = tmp.path().join("append.cfg");
     std::fs::write(&appendconfig, append.render())
@@ -173,7 +181,6 @@ fn run(cli: Cli) -> Result<()> {
         binary,
         core,
         rom: cli.rom.clone(),
-        slot,
         shader: cli.shader.clone(),
         appendconfig,
         fullscreen: cli.fullscreen,
@@ -188,8 +195,12 @@ fn run(cli: Cli) -> Result<()> {
 
     let output = std::path::absolute(&cli.output)
         .with_context(|| format!("resolving {}", cli.output.display()))?;
+    let trigger = match paused {
+        Some(p) => capture::Trigger::Paused { port: p.port, advance: cli.advance },
+        None => capture::Trigger::Settle(Duration::from_secs_f64(cli.settle)),
+    };
     let opts = capture::CaptureOptions {
-        trigger: capture::Trigger::Settle(Duration::from_secs_f64(cli.settle)),
+        trigger,
         frames: cli.frames,
         output: output.clone(),
         keep_running: cli.keep_running,
@@ -263,5 +274,15 @@ mod tests {
     fn frames_rejects_zero() {
         assert!(parse(&["--frames", "0"]).is_err());
         assert_eq!(parse(&["--frames", "1"]).unwrap().frames, 1);
+    }
+
+    #[test]
+    fn advance_and_cmd_port_defaults_and_validation() {
+        let cli = parse(&[]).unwrap();
+        assert_eq!(cli.advance, 1);
+        assert_eq!(cli.cmd_port, 55355);
+        assert!(parse(&["--advance", "0"]).is_err());
+        assert_eq!(parse(&["--advance", "12"]).unwrap().advance, 12);
+        assert_eq!(parse(&["--cmd-port", "60000"]).unwrap().cmd_port, 60000);
     }
 }

@@ -8,7 +8,6 @@ pub struct LaunchPlan {
     pub binary: PathBuf,
     pub core: PathBuf,
     pub rom: PathBuf,
-    pub slot: Option<u32>,
     pub shader: Option<PathBuf>,
     pub appendconfig: PathBuf,
     pub fullscreen: bool,
@@ -24,7 +23,7 @@ pub struct LaunchCommand {
 }
 
 /// Pure assembly of the RetroArch invocation.
-/// Order: `-L <core> [-f] [--set-shader <p>] [-e <slot>] --appendconfig <cfg> [-v] <rom>`.
+/// Order: `-L <core> [-f] [--set-shader <p>] --appendconfig <cfg> [-v] <rom>`.
 /// Env: `MTL_CAPTURE_ENABLED=1` so GPUToolsCapture loads into RetroArch.
 pub fn build_command(plan: &LaunchPlan) -> LaunchCommand {
     let mut args: Vec<OsString> = Vec::new();
@@ -36,10 +35,6 @@ pub fn build_command(plan: &LaunchPlan) -> LaunchCommand {
     if let Some(shader) = &plan.shader {
         args.push("--set-shader".into());
         args.push(shader.as_os_str().into());
-    }
-    if let Some(slot) = plan.slot {
-        args.push("-e".into());
-        args.push(slot.to_string().into());
     }
     args.push("--appendconfig".into());
     args.push(plan.appendconfig.as_os_str().into());
@@ -82,7 +77,6 @@ mod tests {
             binary: PathBuf::from("/Applications/RetroArch.app/Contents/MacOS/RetroArch"),
             core: PathBuf::from("/cores/sameboy_libretro.dylib"),
             rom: PathBuf::from("/roms/z.gb"),
-            slot: None,
             shader: None,
             appendconfig: PathBuf::from("/tmp/run/append.cfg"),
             fullscreen: false,
@@ -110,11 +104,10 @@ mod tests {
     }
 
     #[test]
-    fn fullscreen_shader_slot_and_verbose_in_order() {
+    fn fullscreen_shader_and_verbose_in_order() {
         let mut p = plan();
         p.fullscreen = true;
         p.shader = Some(PathBuf::from("/shaders/crt.slangp"));
-        p.slot = Some(3);
         p.verbose = true;
         let cmd = build_command(&p);
         assert_eq!(
@@ -123,25 +116,8 @@ mod tests {
                 "-L", "/cores/sameboy_libretro.dylib",
                 "-f",
                 "--set-shader", "/shaders/crt.slangp",
-                "-e", "3",
                 "--appendconfig", "/tmp/run/append.cfg",
                 "-v",
-                "/roms/z.gb",
-            ]
-        );
-    }
-
-    #[test]
-    fn slot_zero_still_emits_dash_e() {
-        let mut p = plan();
-        p.slot = Some(0);
-        let cmd = build_command(&p);
-        assert_eq!(
-            strs(&cmd),
-            [
-                "-L", "/cores/sameboy_libretro.dylib",
-                "-e", "0",
-                "--appendconfig", "/tmp/run/append.cfg",
                 "/roms/z.gb",
             ]
         );

@@ -42,8 +42,12 @@ retroarch-capture [OPTIONS] --core <CORE> --rom <ROM> --output <OUT.gputrace>
   --size <WxH>        Exact window size in points. Conflicts with --scale, --fullscreen.
   --scale <N>         Integer scale of core resolution. Conflicts with --size, --fullscreen.
   --fullscreen        Launch with -f. Conflicts with --size, --scale.
-  --settle <SECS>     Seconds to wait after RetroArch becomes capturable
-                      before starting the capture [default: 5]
+  --settle <SECS>     Seconds to wait before capturing when no state is given
+                      [default: 5]
+  --advance <N>       Frames to run after loading the state; the Nth is
+                      captured [default: 1, min 1]
+  --cmd-port <PORT>   UDP port for RetroArch's command interface, enabled
+                      only for this run [default: 55355]
   --frames <N>        Number of frame boundaries to capture [default: 1]
   --keep-running      Do not terminate RetroArch after the capture
   -v, --verbose       Print the assembled command line and appendconfig
@@ -139,6 +143,20 @@ sort_savestates_by_content_enable = "false"
 savestates_in_content_dir = "false"
 ```
 
+Paused mode adds, whenever `--state` or `--slot` was given:
+
+```
+network_cmd_enable = "true"
+network_cmd_port = "<cmd-port>"
+state_slot = "<slot>"
+```
+
+`network_cmd_enable` is scoped to this run only, through the temp
+appendconfig; the user's own config is never touched. `state_slot` is the
+slot `LOAD_STATE` reads: 0 when `--state` staged a file, or the value of
+`--slot` when a state already sits in the user's configured savestate
+directory.
+
 ### `display` - main display size
 
 `visible_size() -> Size` via `objc2-app-kit` `NSScreen::mainScreen`
@@ -151,7 +169,8 @@ savestates_in_content_dir = "false"
 bare `.state` suffix; slot N is `.stateN`. The `.state.png` thumbnail is not
 needed and not copied.
 
-`--slot N` stages nothing and passes `-e N`.
+`--slot N` stages nothing; `state_slot = "N"` in the appendconfig points
+`LOAD_STATE` at the user's own savestate directory instead of a staged copy.
 
 ### `launch` - command line assembly
 
@@ -160,13 +179,13 @@ pure function from a `LaunchPlan` struct to binary, args, and env. Args, in
 order:
 
 ```
--L <core> [-f] [--set-shader <preset>] [-e <slot>] --appendconfig <tmp.cfg> [-v] <rom>
+-L <core> [-f] [--set-shader <preset>] --appendconfig <tmp.cfg> [-v] <rom>
 ```
 
-`-e <slot>` is passed only when a slot is known, i.e. `--state` was staged or
-`--slot` was given. When neither flag is given, no `-e` is passed at all, so
-RetroArch boots fresh instead of loading whatever the user last saved to slot
-0.
+`-e` is never passed. Loading a state is now always driven over the UDP
+command interface (`LOAD_STATE`, see `capture` below) once RetroArch is
+confirmed running, so a state loads at a known point in RetroArch's
+startup rather than racing content init.
 
 Env: `MTL_CAPTURE_ENABLED=1`. `MTLCAPTURE_WAIT_FOR_SIGNAL` is deliberately not
 set: RetroArch must run freely to load the state and settle.
@@ -184,11 +203,54 @@ it. The current directory is left alone.
 3. Poll `gpucapture list` every 100 ms, up to 30 s, until the first column of
    some line equals the PID. If the child exits first, fail with its exit
    status and the last lines of its stderr.
+
+From here the flow depends on whether a state was given (`Trigger::Settle`
+vs. `Trigger::Paused`):
+
+**Settle** (no `--state` and no `--slot`):
+
 4. Sleep `--settle` seconds.
 5. Run `gpucapture start --pid <PID> --count <frames> --output <out>` and wait
    for it. Fail if it exits non-zero or `<out>` does not exist afterwards.
 6. Unless `--keep-running`, send SIGTERM, wait up to 3 s, then SIGKILL.
 7. Remove the temp dir.
+
+**Paused** (`--state` or `--slot` given):
+
+4. Connect over UDP to `--cmd-port` and wait for `GET_STATUS` to report
+   `PLAYING`, polling every 200 ms up to `ready_timeout`. Fail if RetroArch
+   exits first.
+5. `PAUSE_TOGGLE`, then confirm `GET_STATUS` reports `PAUSED`.
+6. `LOAD_STATE`. RetroArch loads the configured slot, runs one frame, and
+   re-pauses; wait `COMMAND_SETTLE` (250 ms) for that to happen.
+7. `FRAMEADVANCE` `--advance` minus 1 times, so RetroArch sits one advance
+   short of the frame to capture.
+8. Arm `gpucapture start --pid <PID> --count <frames> --output <out>` on a
+   background thread, wait 500 ms for it to start polling, then send the
+   final `FRAMEADVANCE`. A paused RetroArch re-presents the same frame on
+   every redraw but never yields a capturable boundary for `gpucapture`; a
+   frame advance does. If the advance command itself fails, kill RetroArch
+   (which releases `gpucapture`) and join the thread rather than leaking it.
+9. Join the capture thread; fail if it panicked or `gpucapture start` failed.
+10. Unless `--keep-running`, send `QUIT` twice (RetroArch's press-twice
+    default) and wait up to 3 s for the process to exit; fall back to
+    SIGTERM then SIGKILL if it hasn't.
+11. Remove the temp dir.
+
+**Why a frame advance.** A spike measured RetroArch's UDP command interface
+directly before this design was approved: `GET_STATUS` replies
+`GET_STATUS PLAYING <core>,<content>,crc32=<hex>`, `GET_STATUS PAUSED ...`,
+or `GET_STATUS CONTENTLESS`; `PAUSE_TOGGLE`, `LOAD_STATE`, `FRAMEADVANCE`,
+and `QUIT` produce no reply. `QUIT` must be sent twice, matching RetroArch's
+press-twice-to-quit default. `LOAD_STATE` while paused loads the file, runs
+one frame, and re-pauses (`retroarch.c` near line 3750). Critically,
+`gpucapture start --count 1` never completes while RetroArch sits paused
+(measured: 30 s stuck at "0 / 1 CAMetalDrawable"), but completes 0.6 s after
+a single `FRAMEADVANCE`. A paused RetroArch keeps redrawing the same frame,
+but a redraw of an unchanged frame is not a new presentable boundary; only
+an actual frame advance produces one. Hence the design always ends on an
+advance, arming `gpucapture` first so it is already polling when that
+advance happens.
 
 If `gpucapture start` reports no capturable boundary (a MoltenVK risk noted
 below), the error is surfaced verbatim; the fallback of `--until-exit` is left
@@ -257,10 +319,11 @@ from.
 - **Hardened runtime.** `RetroArch-nightly.app` is signed with the runtime
   flag but also `disable-library-validation`, so `GPUToolsCapture` should
   load. The other two builds are ad-hoc signed without the runtime flag.
-- **`-e` timing.** RetroArch loads the entry slot after content init. If a
-  core needs a frame or two before a state load succeeds, the settle delay
-  hides it, but a failed state load is silent. The verbose flag passes `-v`
-  to RetroArch so its log shows the load result.
+- **Silent `LOAD_STATE` failure.** RetroArch's UDP interface does not reply
+  to `LOAD_STATE`, so a missing or corrupt state file fails silently; the
+  tool only confirms that RetroArch re-paused after `COMMAND_SETTLE`, not
+  that the load itself succeeded. The verbose flag passes `-v` to RetroArch
+  so its log shows the load result.
 
 ## Toolchain and dependencies
 
