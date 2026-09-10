@@ -76,8 +76,8 @@ to `~/Library/Application Support/RetroArch/cores`.
 ### `config` - reading the base config and writing the appendconfig
 
 `read_keys(cfg_path, keys) -> HashMap<String, String>`: minimal parser for
-RetroArch's `key = "value"` lines. Only the keys the tool needs are read:
-`libretro_directory`, `savestate_directory`.
+RetroArch's `key = "value"` lines. Only the key the tool needs is read: `libretro_directory`. The
+`--slot` path relies on RetroArch reading its own `savestate_directory`.
 
 `AppendConfig` builder producing the text of the temp appendconfig. Always
 emits:
@@ -238,7 +238,7 @@ from.
 
 ## Toolchain and dependencies
 
-Rust 1.98 (`rust-version = "1.98"`, `rust-toolchain.toml` pinning `1.98.0`),
+Rust 1.98 as the MSRV (`rust-version = "1.98"`, no toolchain pin file),
 edition 2024. Dependencies at their current stable releases as of
 2026-09-09, and kept current thereafter:
 
