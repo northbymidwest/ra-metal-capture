@@ -1,6 +1,8 @@
 # ra-metal-capture
 
 [![github](https://img.shields.io/badge/github-northbymidwest%2Fra--metal--capture-blue?logo=github)](https://github.com/northbymidwest/ra-metal-capture)
+[![crates.io](https://img.shields.io/crates/v/ra-metal-capture.svg)](https://crates.io/crates/ra-metal-capture)
+[![docs.rs](https://docs.rs/ra-metal-capture/badge.svg)](https://docs.rs/ra-metal-capture)
 [![CI](https://github.com/northbymidwest/ra-metal-capture/actions/workflows/ci.yml/badge.svg)](https://github.com/northbymidwest/ra-metal-capture/actions/workflows/ci.yml)
 
 Captures a Metal frame trace (`.gputrace`) from RetroArch. It launches a
