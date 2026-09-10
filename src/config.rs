@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn missing_key_is_absent() {
         let m = read_keys("a = \"1\"\n", &["b"]);
-        assert!(m.get("b").is_none());
+        assert!(!m.contains_key("b"));
     }
 
     #[test]
@@ -211,6 +211,26 @@ video_fullscreen_y = \"0\"\n"
             staged_states_dir: None,
         };
         assert_eq!(cfg.render(), COMMON);
+    }
+
+    #[test]
+    fn render_fill_mode_with_staged_states_dir() {
+        let cfg = AppendConfig {
+            window: WindowMode::Fill { max_width: 2488, max_height: 1382 },
+            staged_states_dir: Some(PathBuf::from("/tmp/x/states")),
+        };
+        let expected = format!(
+            "{COMMON}video_fullscreen = \"false\"\n\
+video_window_save_positions = \"false\"\n\
+video_scale = \"20\"\n\
+video_window_auto_width_max = \"2488\"\n\
+video_window_auto_height_max = \"1382\"\n\
+savestate_directory = \"/tmp/x/states\"\n\
+sort_savestates_enable = \"false\"\n\
+sort_savestates_by_content_enable = \"false\"\n\
+savestates_in_content_dir = \"false\"\n"
+        );
+        assert_eq!(cfg.render(), expected);
     }
 
     #[test]

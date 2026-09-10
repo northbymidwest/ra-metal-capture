@@ -47,8 +47,11 @@ area, keeping the aspect ratio).
 ## How it works
 
 1. `MTL_CAPTURE_ENABLED=1` is set so GPUToolsCapture loads into RetroArch.
-2. RetroArch is exec'd directly (not via `open`) with `-L`, `-e`,
-   `--set-shader`, `--appendconfig` and the ROM.
+2. RetroArch is exec'd directly (not via `open`) with `-L`,
+   `--set-shader`, `--appendconfig` and the ROM, plus `-e <slot>` when
+   `--state` or `--slot` was given (with neither, no `-e` is passed, so
+   RetroArch boots fresh instead of loading whatever is in the user's own
+   slot 0).
 3. The tool polls `gpucapture list` until the PID is capturable, waits the
    settle time, then runs `gpucapture start --pid P --count N --output OUT`,
    which blocks until the trace is written.
@@ -78,6 +81,7 @@ before the first run and after every run):
 | `/Applications/RetroArch.app` (`--state`, `--shader`, `--verbose`) | `/tmp/ladx.gputrace` | 95M |
 | `/Applications/RetroArch-nightly.app` (`--slot 0`) | `/tmp/ladx-nightly.gputrace` | 94M |
 | `/Applications/RetroArch-debug.app` (`--slot 0`) | `/tmp/ladx-debug.gputrace` | 58M |
+| `/Applications/RetroArch.app` (`--state`, `--shader`, `--verbose`, Task 11 confirmation after adding the load-animation and OSD suppression keys) | `/tmp/ladx-clean.gputrace` | 117M |
 
 Each is a `gputrace` bundle directory (`index`, `metadata`, `capture`,
 `device-resources-*`, many `MTLHeap-*` files, etc.), consistent with a
@@ -92,18 +96,23 @@ config_save_on_exit = "false"
 savestate_auto_save = "false"
 savestate_auto_load = "false"
 pause_nonactive = "false"
+menu_show_load_content_animation = "false"
+video_font_enable = "false"
 video_fullscreen = "false"
 video_window_save_positions = "false"
 video_scale = "20"
 video_window_auto_width_max = "2488"
 video_window_auto_height_max = "1382"
-savestate_directory = "/var/folders/.../retroarch-capture-aPoElL/states"
+savestate_directory = "/var/folders/.../retroarch-capture-RfVQ1Q/states"
 sort_savestates_enable = "false"
 sort_savestates_by_content_enable = "false"
 savestates_in_content_dir = "false"
 
-command: MTL_CAPTURE_ENABLED=1 /Applications/RetroArch.app/Contents/MacOS/RetroArch "-L" ".../cores/sameboy_libretro.dylib" "--set-shader" ".../shaders_slang/crt/crt-geom.slangp" "-e" "0" "--appendconfig" "/var/folders/.../retroarch-capture-aPoElL/append.cfg" "-v" ".../Legend of Zelda, The - Link's Awakening DX (U) (V1.2) [C][!].gbc"
+command: MTL_CAPTURE_ENABLED=1 /Applications/RetroArch.app/Contents/MacOS/RetroArch "-L" ".../cores/sameboy_libretro.dylib" "--set-shader" ".../shaders_slang/crt/crt-geom.slangp" "-e" "0" "--appendconfig" "/var/folders/.../retroarch-capture-RfVQ1Q/append.cfg" "-v" ".../Legend of Zelda, The - Link's Awakening DX (U) (V1.2) [C][!].gbc"
 ```
+
+(This sample predates the fix that omits `-e` when no state or slot is
+requested; here `--state` was given, so `-e "0"` is still correct.)
 
 RetroArch launched, `gpucapture list` reported the PID capturable almost
 immediately, the tool settled for the default 5 s, then ran the capture

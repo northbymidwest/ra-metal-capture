@@ -99,12 +99,16 @@ captured frame; `video_font_enable` disables all OSD text for the run.
 
 Window mode adds:
 
-- Fill (default): `video_fullscreen = "false"`, `video_scale = "20"`,
+- Fill (default): `video_fullscreen = "false"`,
+  `video_window_save_positions = "false"`, `video_scale = "20"`,
   `video_window_auto_width_max = "<W>"`,
   `video_window_auto_height_max = "<H>"` where W and H are the main display's
   visible frame (NSScreen, excludes menu bar and dock) minus a 28-point title
   bar allowance. RetroArch shrinks the scaled window to fit these maxima while
   keeping aspect ratio (`gfx/video_driver.c`, windowed size computation).
+  `video_window_save_positions = "false"` is needed because on macOS a saved
+  position in the user's own config would otherwise take precedence over this
+  run's maxima (`gfx/video_driver.c`, custom-size branch).
 - `--size WxH`: `video_fullscreen = "false"`,
   `video_window_save_positions = "true"`,
   `video_windowed_position_width = "<W>"`,
@@ -112,9 +116,13 @@ Window mode adds:
   is gated on `video_window_save_positions`, not
   `video_window_custom_size_enable`. `config_save_on_exit=false` prevents the
   position being written back.
-- `--scale N`: `video_fullscreen = "false"`, `video_scale = "<N>"`,
+- `--scale N`: `video_fullscreen = "false"`,
+  `video_window_save_positions = "false"`, `video_scale = "<N>"`,
   `video_window_auto_width_max = "0"`, `video_window_auto_height_max = "0"`,
   `video_fullscreen_x = "0"`, `video_fullscreen_y = "0"` so nothing clamps it.
+  `video_window_save_positions = "false"` is needed for the same reason as
+  Fill mode: on macOS a saved position in the user's own config would
+  otherwise take precedence (`gfx/video_driver.c`, custom-size branch).
 - `--fullscreen`: nothing in the config; `-f` on the command line.
 
 State mode adds, for `--state <file>` only:
@@ -147,8 +155,13 @@ pure function from a `LaunchPlan` struct to binary, args, and env. Args, in
 order:
 
 ```
--L <core> [-f] [--set-shader <preset>] -e <slot> --appendconfig <tmp.cfg> [-v] <rom>
+-L <core> [-f] [--set-shader <preset>] [-e <slot>] --appendconfig <tmp.cfg> [-v] <rom>
 ```
+
+`-e <slot>` is passed only when a slot is known, i.e. `--state` was staged or
+`--slot` was given. When neither flag is given, no `-e` is passed at all, so
+RetroArch boots fresh instead of loading whatever the user last saved to slot
+0.
 
 Env: `MTL_CAPTURE_ENABLED=1`. `MTLCAPTURE_WAIT_FOR_SIGNAL` is deliberately not
 set: RetroArch must run freely to load the state and settle.

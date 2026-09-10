@@ -30,6 +30,14 @@ fn parse_size(s: &str) -> std::result::Result<(u32, u32), String> {
     Ok((w, h))
 }
 
+fn parse_settle(s: &str) -> std::result::Result<f64, String> {
+    let v: f64 = s.parse().map_err(|_| format!("not a number: {s:?}"))?;
+    if !v.is_finite() || v < 0.0 {
+        return Err(format!("settle must be a non-negative, finite number of seconds, got {s:?}"));
+    }
+    Ok(v)
+}
+
 /// Launch RetroArch with a ROM, save state and shader preset, then capture
 /// frames to a .gputrace with gpucapture.
 #[derive(Parser, Debug)]
@@ -76,11 +84,11 @@ struct Cli {
     fullscreen: bool,
 
     /// Seconds to wait after RetroArch is capturable before capturing
-    #[arg(long, default_value_t = 5.0)]
+    #[arg(long, default_value_t = 5.0, value_parser = parse_settle)]
     settle: f64,
 
     /// Number of frame boundaries to capture
-    #[arg(long, default_value_t = 1)]
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
     frames: u32,
 
     /// Output .gputrace path
@@ -145,10 +153,10 @@ fn run(cli: Cli) -> Result<()> {
         (Some(state_file), _) => {
             let dir = tmp.path().join("states");
             let slot = state::stage(state_file, &cli.rom, &dir)?;
-            (slot, Some(dir))
+            (Some(slot), Some(dir))
         }
-        (None, Some(n)) => (n, None),
-        (None, None) => (0, None),
+        (None, Some(n)) => (Some(n), None),
+        (None, None) => (None, None),
     };
 
     let append = AppendConfig {
@@ -187,6 +195,11 @@ fn run(cli: Cli) -> Result<()> {
         log_path: tmp.path().join("retroarch.log"),
     };
     capture::run(&cmd, &opts)?;
+
+    if cli.keep_running {
+        let kept = tmp.keep();
+        eprintln!("kept {} for the running RetroArch", kept.display());
+    }
 
     println!("{}", output.display());
     Ok(())
@@ -235,5 +248,18 @@ mod tests {
     fn scale_and_fullscreen_map_to_window_modes() {
         assert_eq!(parse(&["--scale", "4"]).unwrap().window_mode(), WindowMode::Scale(4));
         assert_eq!(parse(&["--fullscreen"]).unwrap().window_mode(), WindowMode::Fullscreen);
+    }
+
+    #[test]
+    fn settle_rejects_negative_and_nan() {
+        assert!(parse(&["--settle=-1"]).is_err());
+        assert!(parse(&["--settle=nan"]).is_err());
+        assert_eq!(parse(&["--settle", "2.5"]).unwrap().settle, 2.5);
+    }
+
+    #[test]
+    fn frames_rejects_zero() {
+        assert!(parse(&["--frames", "0"]).is_err());
+        assert_eq!(parse(&["--frames", "1"]).unwrap().frames, 1);
     }
 }

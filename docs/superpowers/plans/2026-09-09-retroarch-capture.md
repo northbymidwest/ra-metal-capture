@@ -1587,7 +1587,7 @@ fn run(cli: Cli) -> Result<()> {
 }
 ```
 
-Note: with `--keep-running` the temp dir is still removed when `run` returns. RetroArch has already read the appendconfig and the state at that point, so this is fine.
+Note: with `--keep-running` the temp dir is kept (via `tmp.keep()`) instead of being removed when `run` returns, since RetroArch is still running and its `savestate_directory` may point into it.
 
 - [ ] **Step 4: Build, run the full test suite, and check clippy**
 

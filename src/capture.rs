@@ -84,6 +84,13 @@ fn gpucapture_list() -> Result<Vec<u32>> {
         .arg("list")
         .output()
         .context("running `gpucapture list`; is Xcode installed?")?;
+    if !out.status.success() {
+        bail!(
+            "`gpucapture list` failed with {}: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
     Ok(parse_capturable_pids(&String::from_utf8_lossy(&out.stdout)))
 }
 
@@ -137,6 +144,14 @@ pub fn run(cmd: &LaunchCommand, opts: &CaptureOptions) -> Result<()> {
         );
     }
 
+    match std::fs::remove_dir_all(&opts.output) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(e).with_context(|| format!("removing stale bundle at {}", opts.output.display()));
+        }
+    }
+
     let status = Command::new("gpucapture")
         .args(["start", "--pid", &pid.to_string(), "--count", &opts.frames.to_string()])
         .arg("--output")
@@ -146,9 +161,10 @@ pub fn run(cmd: &LaunchCommand, opts: &CaptureOptions) -> Result<()> {
     if !status.success() {
         bail!("`gpucapture start` failed with {status}");
     }
-    if !opts.output.exists() {
+    let index = opts.output.join("index");
+    if !index.exists() {
         bail!(
-            "`gpucapture start` succeeded but wrote nothing at {}",
+            "`gpucapture start` succeeded but {} has no `index` entry; the bundle looks incomplete",
             opts.output.display()
         );
     }
