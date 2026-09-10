@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Refuses a commit that is not rustfmt-clean. Deliberately does NOT reformat:
+# a hook that edits your tree makes you commit code you did not read.
+# Bypass for a genuine exception with `git commit --no-verify`.
+set -euo pipefail
+
+if ! command -v cargo >/dev/null; then
+  echo "pre-commit: cargo not on PATH; skipping the rustfmt check" >&2
+  exit 0
+fi
+
+if ! cargo fmt --check --quiet; then
+  echo >&2
+  echo "pre-commit: this commit is not rustfmt-clean." >&2
+  echo "  Run 'cargo fmt', review the diff, and stage it." >&2
+  exit 1
+fi

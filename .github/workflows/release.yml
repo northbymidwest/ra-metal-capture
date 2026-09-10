@@ -1,0 +1,97 @@
+name: release
+run-name: release ${{ inputs.version }}${{ inputs.dry_run && ' (dry run)' || '' }}
+
+# Publishes the crate, then tags, through the shared composites in
+# northbymidwest/gh-actions (see that repo's README for the design). The tag
+# is an output of a succeeded release, never its trigger: a protected v* tag
+# is permanent the moment it lands, so a tag-triggered release would burn a
+# version on any downstream failure.
+#
+# Publishing runs on macOS because cargo publish's verify build links AppKit
+# through objc2-app-kit, which only the Apple targets provide.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, without the leading v (e.g. 0.1.1)'
+        type: string
+        required: true
+      dry_run:
+        description: 'Stop before publishing anything'
+        type: boolean
+        required: true
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    # Validation only: reads the manifest, the changelog, and crates.io. No
+    # cargo build.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      publish: ${{ steps.pre.outputs.publish }}
+      registry: ${{ steps.pre.outputs.registry }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: pre
+        uses: northbymidwest/gh-actions/release-preflight@fbbaaad718a8294de0a132bc76a2a4e3a7ccea01 # v0.2.2
+        with:
+          version: ${{ inputs.version }}
+          dry-run: ${{ inputs.dry_run }}
+          crates: Cargo.toml
+          packages: ra-metal-capture
+          token: ${{ github.token }}
+      - uses: northbymidwest/gh-actions/release-review-summary@fbbaaad718a8294de0a132bc76a2a4e3a7ccea01 # v0.2.2
+        with:
+          version: ${{ inputs.version }}
+          dry-run: ${{ inputs.dry_run }}
+          tag: ${{ steps.pre.outputs.tag }}
+          registry: ${{ steps.pre.outputs.registry }}
+          what-approving-does: publishes ra-metal-capture and tags v${{ inputs.version }}
+          token: ${{ github.token }}
+
+  publish:
+    needs: preflight
+    # The crates.io trusted-publishing token is scoped to this environment; its
+    # required-reviewer gate is the one human approval before an irreversible
+    # upload. Restrict the environment to main in repo settings.
+    environment: release
+    # macOS: cargo publish's verify build links AppKit.
+    runs-on: macos-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+      - uses: northbymidwest/gh-actions/release-publish-crate@fbbaaad718a8294de0a132bc76a2a4e3a7ccea01 # v0.2.2
+        with:
+          packages: ra-metal-capture
+          publish: ${{ needs.preflight.outputs.publish }}
+          dry-run: ${{ inputs.dry_run }}
+      # The tag is pushed with a read-write deploy key, the one bypass actor
+      # the `protect version tags` ruleset allows; its private half exists
+      # only as the release environment's RELEASE_TAG_KEY secret.
+      - uses: northbymidwest/gh-actions/release-tag@fbbaaad718a8294de0a132bc76a2a4e3a7ccea01 # v0.2.2
+        with:
+          version: ${{ inputs.version }}
+          deploy-key: ${{ secrets.RELEASE_TAG_KEY }}
+          token: ${{ github.token }}
+          dry-run: ${{ inputs.dry_run }}

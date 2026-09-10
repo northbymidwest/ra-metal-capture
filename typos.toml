@@ -1,0 +1,4 @@
+# typos config (crate-ci/typos). Identifiers this crate inherits from its
+# dependencies or from RetroArch and cannot respell go under
+# [default.extend-words]; there are none yet.
+[default.extend-words]

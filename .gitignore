@@ -1,3 +1,4 @@
-target/
-.superpowers/
+/target
 *.gputrace
+.superpowers/
+.DS_Store

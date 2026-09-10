@@ -1,0 +1,51 @@
+name: codeql
+
+# CodeQL for `actions` (the unattended workflows here carry `issues: write` and
+# a crates.io publish path, so they are worth scanning for injection) and for
+# `rust`. Both use build-mode `none`: no compilation, so this needs no private
+# framework and runs on Ubuntu.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '7 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+          # Rust has no autobuild mode in CodeQL; build-mode none yields a
+          # standing "Low Rust analysis quality" warning that is not
+          # configurable away.
+          - language: rust
+            build-mode: none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+      - uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          category: /language:${{ matrix.language }}

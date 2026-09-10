@@ -1,0 +1,60 @@
+name: audit
+
+# Checks the resolved lockfile against the RustSec advisory DB. Licenses, bans
+# and sources are deny.toml's job (the supply-chain job in ci.yml); this is
+# advisories only. cargo-audit reads Cargo.lock directly, so it needs no path
+# dependencies checked out.
+on:
+  push:
+    paths: ['Cargo.toml', 'Cargo.lock', '**/Cargo.toml']
+  pull_request:
+    paths: ['Cargo.toml', 'Cargo.lock', '**/Cargo.toml']
+  schedule:
+    - cron: '53 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.event_name != 'schedule' }}
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+      - uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
+        with:
+          tool: cargo-audit@0.22.2
+      - id: audit
+        run: |
+          set -o pipefail
+          cargo audit --color never 2>&1 | tee audit.log
+      # One rolling issue, not one per week: comment on the open one if it
+      # exists, else open it. Only on unattended runs (schedule/dispatch).
+      - name: File the advisory
+        if: failure() && steps.audit.outcome == 'failure' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="audit: an advisory against a dependency"
+          body=$(printf '`cargo audit` reported an advisory on %s (run %s).\n\n```\n%s\n```\n' \
+            "$(date -u +%Y-%m-%d)" \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            "$(cat audit.log)")
+          existing=$(gh issue list --state open --label ci-failure --json number,title \
+            --jq ".[] | select(.title == \"$title\") | .number" | head -1)
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --label ci-failure --body "$body"
+          fi

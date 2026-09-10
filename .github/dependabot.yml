@@ -1,0 +1,34 @@
+version: 2
+updates:
+  # The only mechanism that moves the SHA-pinned action versions in the
+  # workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: ci
+    labels: []
+    # One PR for all action bumps, so multi-`uses:` actions (e.g. codeql-action
+    # init + analyze) move together rather than in separate, version-mismatched PRs.
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  # Version updates are OFF (open-pull-requests-limit: 0): the versions in
+  # Cargo.toml are minimum floors, not targets, so opening a PR just because a
+  # newer version exists is wrong. Left enabled only so a security advisory
+  # against a floor still opens a PR.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: deps
+    open-pull-requests-limit: 0
+    labels: []

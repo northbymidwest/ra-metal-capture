@@ -1,0 +1,27 @@
+# cargo-deny config. Run in CI as `cargo deny check licenses bans sources`.
+# Advisories are handled separately by audit.yml (cargo-audit against RustSec),
+# so there is deliberately no [advisories] section here.
+
+[graph]
+all-features = false
+
+[licenses]
+# The union of every SPDX license in the resolved tree (surveyed from
+# `cargo metadata`). `unused-allowed-license = "deny"` keeps this list honest:
+# it fails if an entry here stops being needed.
+allow = [
+    "0BSD",
+    "MIT",
+    "Apache-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+unused-allowed-license = "deny"
+
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
