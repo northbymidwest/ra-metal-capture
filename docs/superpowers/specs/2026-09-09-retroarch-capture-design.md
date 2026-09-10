@@ -236,8 +236,18 @@ from.
   hides it, but a failed state load is silent. The verbose flag passes `-v`
   to RetroArch so its log shows the load result.
 
-## Dependencies
+## Toolchain and dependencies
 
-`clap` (derive), `anyhow`, `tempfile`, `objc2-app-kit` + `objc2-foundation`
-(display size only), `nix` or `libc` (signals). No `unsafe` outside the
-display query.
+Rust 1.98 (`rust-version = "1.98"`, `rust-toolchain.toml` pinning `1.98.0`),
+edition 2024. Dependencies at their current stable releases as of
+2026-09-09, and kept current thereafter:
+
+| crate | version | use |
+|---|---|---|
+| clap | 4.6 (derive) | argument parsing and conflict rules |
+| anyhow | 1.0 | error context |
+| tempfile | 3.27 | per-run temp dir |
+| objc2-app-kit, objc2-foundation | 0.3 | main display visible frame |
+| nix | 0.31 (signal feature) | SIGTERM / SIGKILL to the child |
+
+No `unsafe` outside the display query.
