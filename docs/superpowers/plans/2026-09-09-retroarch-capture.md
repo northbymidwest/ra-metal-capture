@@ -1823,3 +1823,216 @@ git commit -m "Suppress the load animation and OSD text during capture
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
+
+---
+
+### Task 12: Replace bare `(u32, u32)` sizes with a `Size` struct
+
+Requested by the user after reading the code: a tuple gives no field names at
+use sites and lets callers swap width and height. Rendered appendconfig text
+is unchanged, so every exact-string test stays as it is.
+
+**Files:**
+- Modify: `src/config.rs` (add `Size`, change the `WindowMode` variants)
+- Modify: `src/display.rs` (`FALLBACK`, `visible_size`, `fill_mode`, tests)
+- Modify: `src/main.rs` (`parse_size`, the `size` arg, `window_mode`, tests)
+- Modify: `docs/superpowers/specs/2026-09-09-retroarch-capture-design.md` (the `display` and `config` component text)
+
+**Interfaces:**
+- Produces:
+  ```rust
+  #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  pub struct Size { pub width: u32, pub height: u32 }
+  pub enum WindowMode { Fill { max: Size }, Exact(Size), Scale(u32), Fullscreen }
+  pub fn visible_size() -> Size
+  pub fn fill_mode(visible: Size) -> WindowMode
+  fn parse_size(s: &str) -> Result<Size, String>
+  ```
+- `TITLE_BAR_POINTS` stays a `u32` constant: it is a height offset, not a size.
+
+- [ ] **Step 1: Add `Size` and change the variants in `src/config.rs`**
+
+Above `WindowMode`:
+
+```rust
+/// A width and height in points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Size {
+    pub width: u32,
+    pub height: u32,
+}
+```
+
+Change the two variants (doc comments unchanged in meaning):
+
+```rust
+    /// Windowed, scaled up and then clamped to this maximum (points).
+    Fill { max: Size },
+    /// Windowed, exactly this size (points).
+    Exact(Size),
+```
+
+In `render`, the match arms become `WindowMode::Fill { max } => { ... max.width.to_string() ... max.height.to_string() }` and `WindowMode::Exact(size) => { ... size.width ... size.height ... }`. Update the three test constructions in `config.rs` tests: `WindowMode::Fill { max: Size { width: 2488, height: 1382 } }` and `WindowMode::Exact(Size { width: 1600, height: 1440 })`.
+
+- [ ] **Step 2: Update `src/display.rs`**
+
+```rust
+use crate::config::{Size, WindowMode};
+
+const FALLBACK: Size = Size { width: 1920, height: 1080 };
+
+pub fn visible_size() -> Size {
+    // same body; the final line becomes
+    Size { width: frame.size.width as u32, height: frame.size.height as u32 }
+}
+
+pub fn fill_mode(visible: Size) -> WindowMode {
+    WindowMode::Fill {
+        max: Size {
+            width: visible.width,
+            height: visible.height.saturating_sub(TITLE_BAR_POINTS),
+        },
+    }
+}
+```
+
+Tests: `fill_mode(Size { width: 2488, height: 1410 })` expects `WindowMode::Fill { max: Size { width: 2488, height: 1382 } }`; `fill_mode(Size { width: 100, height: 10 })` expects `max: Size { width: 100, height: 0 }`.
+
+- [ ] **Step 3: Update `src/main.rs`**
+
+`parse_size` returns `Result<Size, String>` and ends with `Ok(Size { width: w, height: h })`. The arg is `size: Option<Size>`. `window_mode` uses `else if let Some(size) = self.size { WindowMode::Exact(size) }`. Import `Size` alongside `AppendConfig, WindowMode`. The CLI test expects `WindowMode::Exact(Size { width: 1600, height: 1440 })`.
+
+- [ ] **Step 4: Run everything**
+
+Run: `cargo test && cargo clippy --all-targets -- -D warnings`
+Expected: 36 tests PASS (same count; no test added or removed), clippy clean. Rendered text unchanged, so the render tests prove the refactor did not alter output.
+
+- [ ] **Step 5: Update the spec**
+
+In the `display` section: `visible_size() -> Size`. In the `config` section where `WindowMode` is described, mention `Size { width, height }` and the `Fill { max: Size }` / `Exact(Size)` variants.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/config.rs src/display.rs src/main.rs docs/superpowers/specs/2026-09-09-retroarch-capture-design.md docs/superpowers/plans/2026-09-09-retroarch-capture.md
+git commit -m "Name window dimensions with a Size struct
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 13: Only ever delete a path that is a gputrace bundle
+
+The fix wave made `capture::run` remove any existing directory at `--output`
+before capturing. That is right for a stale bundle and wrong for a typo such
+as `--output ~/Documents`. The removal must be limited to things that are
+unmistakably a previous capture.
+
+**Files:**
+- Modify: `src/capture.rs`
+- Modify: `docs/superpowers/specs/2026-09-09-retroarch-capture-design.md` (the `capture` step list)
+
+**Interfaces:** no signature changes. New private helper:
+
+```rust
+/// True when `path` looks like a bundle this tool (or Xcode) wrote: a
+/// directory whose name ends in `.gputrace` and which contains an `index`.
+fn is_gputrace_bundle(path: &Path) -> bool
+```
+
+- [ ] **Step 1: Write the failing tests**
+
+In `src/capture.rs` tests, using `tempfile::tempdir()`:
+
+```rust
+    #[test]
+    fn recognises_a_bundle_only_with_suffix_and_index() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bundle = tmp.path().join("a.gputrace");
+        std::fs::create_dir_all(bundle.join("index")).unwrap();
+        assert!(is_gputrace_bundle(&bundle));
+
+        let no_index = tmp.path().join("b.gputrace");
+        std::fs::create_dir_all(&no_index).unwrap();
+        assert!(!is_gputrace_bundle(&no_index));
+
+        let wrong_suffix = tmp.path().join("c");
+        std::fs::create_dir_all(wrong_suffix.join("index")).unwrap();
+        assert!(!is_gputrace_bundle(&wrong_suffix));
+
+        assert!(!is_gputrace_bundle(&tmp.path().join("missing.gputrace")));
+    }
+
+    #[test]
+    fn prepare_output_refuses_a_directory_that_is_not_a_bundle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("docs");
+        std::fs::create_dir_all(&dir).unwrap();
+        let err = prepare_output(&dir).unwrap_err().to_string();
+        assert!(err.contains("docs"), "{err}");
+        assert!(dir.exists(), "must not delete a non-bundle directory");
+    }
+
+    #[test]
+    fn prepare_output_removes_a_stale_bundle_and_tolerates_absence() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bundle = tmp.path().join("old.gputrace");
+        std::fs::create_dir_all(bundle.join("index")).unwrap();
+        prepare_output(&bundle).unwrap();
+        assert!(!bundle.exists());
+        prepare_output(&tmp.path().join("new.gputrace")).unwrap();
+    }
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `cargo test capture::`
+Expected: 3 new tests FAIL (functions undefined).
+
+- [ ] **Step 3: Implement**
+
+```rust
+fn is_gputrace_bundle(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e == "gputrace")
+        && path.is_dir()
+        && path.join("index").exists()
+}
+
+/// Make room for a new capture at `output`. A previous bundle is removed;
+/// anything else that exists there is refused, so a mistyped path never
+/// deletes user data.
+fn prepare_output(output: &Path) -> Result<()> {
+    if !output.exists() {
+        return Ok(());
+    }
+    if !is_gputrace_bundle(output) {
+        bail!(
+            "{} exists and is not a .gputrace bundle; refusing to overwrite it",
+            output.display()
+        );
+    }
+    std::fs::remove_dir_all(output)
+        .with_context(|| format!("removing stale bundle {}", output.display()))
+}
+```
+
+Replace the inline `remove_dir_all` block in `run` with `prepare_output(&opts.output)?;`. Keep this call where the removal was (after settle, before `gpucapture start`), or move it to the top of `run` before spawning RetroArch so a refused path fails fast without launching anything; the latter is preferred.
+
+- [ ] **Step 4: Run everything**
+
+Run: `cargo test && cargo clippy --all-targets -- -D warnings`
+Expected: 39 tests PASS, clippy clean.
+
+- [ ] **Step 5: Spec**
+
+In the `capture` step list, replace the stale-bundle sentence with: "Before spawning, if `<out>` exists it must be a previous `.gputrace` bundle (name suffix plus an `index` entry) and is removed; any other existing path is refused so a mistyped `--output` never deletes user data."
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/capture.rs docs/superpowers/specs/2026-09-09-retroarch-capture-design.md docs/superpowers/plans/2026-09-09-retroarch-capture.md
+git commit -m "Refuse to overwrite anything at --output that is not a gputrace bundle
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```

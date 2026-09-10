@@ -171,16 +171,19 @@ it. The current directory is left alone.
 
 ### `capture` - driving gpucapture
 
-1. Spawn RetroArch. Wrap the child in a guard whose `Drop` sends SIGKILL if
+1. Before spawning, if `<out>` exists it must be a previous `.gputrace`
+   bundle (name suffix plus an `index` entry) and is removed; any other
+   existing path is refused so a mistyped `--output` never deletes user data.
+2. Spawn RetroArch. Wrap the child in a guard whose `Drop` sends SIGKILL if
    the child is still running, so every early return cleans up.
-2. Poll `gpucapture list` every 100 ms, up to 30 s, until the first column of
+3. Poll `gpucapture list` every 100 ms, up to 30 s, until the first column of
    some line equals the PID. If the child exits first, fail with its exit
    status and the last lines of its stderr.
-3. Sleep `--settle` seconds.
-4. Run `gpucapture start --pid <PID> --count <frames> --output <out>` and wait
+4. Sleep `--settle` seconds.
+5. Run `gpucapture start --pid <PID> --count <frames> --output <out>` and wait
    for it. Fail if it exits non-zero or `<out>` does not exist afterwards.
-5. Unless `--keep-running`, send SIGTERM, wait up to 3 s, then SIGKILL.
-6. Remove the temp dir.
+6. Unless `--keep-running`, send SIGTERM, wait up to 3 s, then SIGKILL.
+7. Remove the temp dir.
 
 If `gpucapture start` reports no capturable boundary (a MoltenVK risk noted
 below), the error is surfaced verbatim; the fallback of `--until-exit` is left
