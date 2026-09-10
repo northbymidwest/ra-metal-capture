@@ -47,6 +47,15 @@ impl ChildGuard {
             sleep(Duration::from_millis(50));
         }
     }
+
+    /// SIGKILL immediately, wait for it, and disarm. Used to release a
+    /// `gpucapture start` that is blocked waiting on a boundary this pid
+    /// will never reach again.
+    fn kill_now(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        self.armed = false;
+    }
 }
 
 impl Drop for ChildGuard {
@@ -210,7 +219,17 @@ fn capture_paused(
     let output_owned = output.to_path_buf();
     let capture = std::thread::spawn(move || gpucapture_start(pid, frames, &output_owned));
     sleep(ARM_DELAY);
-    remote.frame_advance()?;
+    let advanced = remote.frame_advance();
+    if let Err(e) = advanced {
+        // RetroArch is paused, so `gpucapture start` is blocked waiting for
+        // a boundary that will never come; joining without killing first
+        // would hang forever. Killing the pid releases gpucapture (it exits
+        // once its target is gone), so join it here rather than leaking the
+        // thread and its orphaned child.
+        guard.kill_now();
+        let _ = capture.join();
+        return Err(e.context("advancing the final frame; RetroArch was killed to release gpucapture"));
+    }
     match capture.join() {
         Ok(result) => result?,
         Err(_) => bail!("the gpucapture thread panicked"),
