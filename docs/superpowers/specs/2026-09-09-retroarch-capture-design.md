@@ -1,4 +1,4 @@
-# retroarch-capture design
+# ra-metal-capture design
 
 A Rust CLI that launches a chosen RetroArch.app with a core, a ROM, a save
 state, and a shader preset, sizes the window, and uses Apple's `gpucapture(1)`
@@ -25,7 +25,7 @@ never modified.
 ## CLI
 
 ```
-retroarch-capture [OPTIONS] --core <CORE> --rom <ROM> --output <OUT.gputrace>
+ra-metal-capture [OPTIONS] --core <CORE> --rom <ROM> --output <OUT.gputrace>
 
   --app <PATH>        RetroArch .app bundle, or the binary inside it
                       [default: /Applications/RetroArch.app]
@@ -314,7 +314,7 @@ Unit tests, no RetroArch or gpucapture required:
 Manual end-to-end check, recorded in the README:
 
 ```
-retroarch-capture --core sameboy \
+ra-metal-capture --core sameboy \
   --rom "<Link's Awakening rom>" \
   --state "~/Documents/RetroArch/states/SameBoy/Legend of Zelda, The - Link's Awakening DX (U) (V1.2) [C][!].state" \
   --shader "~/Library/Application Support/RetroArch/shaders/<preset>" \

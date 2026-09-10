@@ -1,10 +1,11 @@
-# retroarch-capture
+# ra-metal-capture
 
-Launches a RetroArch.app with a core, ROM, save state and shader preset,
-sizes the window, and records presented frames to a `.gputrace` using
-Apple's `gpucapture(1)`. Nothing in your `retroarch.cfg` or savestate
-directory is modified: every override goes into a per-run appendconfig in a
-temp dir.
+Captures a Metal frame trace (`.gputrace`) from RetroArch. It launches a
+RetroArch.app with a core, ROM, save state and shader preset, sizes the
+window, and records presented frames with Apple's `gpucapture(1)`. RetroArch
+runs Vulkan through MoltenVK, which is what makes the trace Metal. Nothing
+in your `retroarch.cfg` or savestate directory is modified: every override
+goes into a per-run appendconfig in a temp dir.
 
 Requires macOS with Xcode (for `gpucapture`) and Rust 1.98.
 

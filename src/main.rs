@@ -160,7 +160,7 @@ fn run(cli: Cli) -> Result<()> {
     }
 
     let tmp = tempfile::Builder::new()
-        .prefix("retroarch-capture-")
+        .prefix("ra-metal-capture-")
         .tempdir()
         .context("creating temp dir")?;
 
@@ -229,7 +229,7 @@ mod tests {
     use super::*;
 
     fn parse(args: &[&str]) -> std::result::Result<Cli, clap::Error> {
-        let mut full = vec!["retroarch-capture", "--core", "c", "--rom", "r", "--output", "o"];
+        let mut full = vec!["ra-metal-capture", "--core", "c", "--rom", "r", "--output", "o"];
         full.extend_from_slice(args);
         Cli::try_parse_from(full)
     }
