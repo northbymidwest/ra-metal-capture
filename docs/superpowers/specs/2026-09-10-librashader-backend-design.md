@@ -72,8 +72,8 @@ Rules, enforced by clap where it can express them and in `run` otherwise:
   RetroArch-only. Under `--backend librashader` they are ignored, and the
   README's table says so. Detecting an explicitly passed default-valued flag
   needs clap's `ArgMatches`; not worth it for flags that do no harm.
-- `-v` prints the chosen output size, the decoded image size, and the
-  number of passes the preset loaded.
+- `-v` prints the decoded image size, the chosen output size, and the
+  frame count.
 
 Exit status is non-zero, with a one-line reason on stderr, when: the image
 cannot be decoded; the preset fails to parse or compile; no Metal device
@@ -109,8 +109,8 @@ of the plan; the set above is the expected one.
 Metal runtime enabled its tree resolves to 159 packages and builds glslang
 and SPIRV-Cross from C++ source through `cc`, which needs the Xcode command
 line tools that any machine with `gpucapture` already has. Measured
-2026-09-10 in a scratch project; the actual build time is recorded by the
-plan's first real build.
+2026-09-10 in a scratch project on an M-series Mac: a clean build of that
+tree takes 25.6 s wall, 159 s CPU.
 
 Why on by default: the user of this tool wants both backends from one
 `cargo install`. `--no-default-features` gives the RetroArch-only build for
@@ -138,25 +138,30 @@ See Sizing.
 pub struct RenderOptions {
     pub image: PathBuf,
     pub preset: PathBuf,
-    pub size: Size,          // output texture, pixels
+    pub window: WindowMode,  // from the command line; mapped to pixels inside run
+    pub screen: Screen,      // display::main_screen()
     pub frames: u32,
     pub output: PathBuf,     // absolute .gputrace path
     pub verbose: bool,
 }
 ```
 
+`run` takes the window mode rather than a pixel size because the fill
+computation needs the image's dimensions, and the image is decoded once,
+inside `run`.
+
 **`render::run(&RenderOptions) -> Result<()>`** does, in order:
 
 1. `capture::prepare_output(&output)` (made `pub`): a previous bundle is
    removed, anything else there is refused.
 2. Decode the image with `image::open` into RGBA8, then swap to BGRA8.
-   Errors carry the path.
+   Errors carry the path. Compute the output size with `output_size`.
 3. `MTLCreateSystemDefaultDevice`, `newCommandQueue`. Bail if either is
    `None`.
 4. Input texture: `BGRA8Unorm`, image size, `Shared` storage, usage
    `ShaderRead`; `replaceRegion` uploads the bytes. Output texture:
-   `BGRA8Unorm`, `size`, `Shared` storage, usage `RenderTarget |
-   ShaderRead`.
+   `BGRA8Unorm`, the computed output size, `Shared` storage, usage
+   `RenderTarget | ShaderRead`.
 5. `librashader::runtime::mtl::FilterChain::load_from_path(preset,
    ShaderFeatures::NONE, &queue, None)`. Errors are librashader's, wrapped
    with the preset path.
@@ -174,8 +179,8 @@ pub struct Trace { manager: Retained<MTLCaptureManager> }
 impl Trace {
     /// Start writing a GPU trace document for every command buffer on `device`.
     pub fn start(device: &ProtocolObject<dyn MTLDevice>, output: &Path) -> Result<Trace>;
-    /// Stop and finish writing the bundle.
-    pub fn finish(self) -> Result<()>;
+    /// Stop the capture and let Metal finish writing the bundle.
+    pub fn finish(self);
 }
 impl Drop for Trace { /* stopCapture if still capturing */ }
 ```
@@ -186,7 +191,8 @@ with a message naming `MTL_CAPTURE_ENABLED` if false, builds an
 `MTLCaptureDescriptor` with `setCaptureObject(device)`,
 `setDestination(GPUTraceDocument)`, `setOutputURL(NSURL::fileURLWithPath)`,
 and calls `startCaptureWithDescriptor_error`, converting the `NSError` into
-an `anyhow` error. `finish` calls `stopCapture` and disarms the guard. The
+an `anyhow` error. `finish` calls `stopCapture` and disarms the guard; the
+`index` check that follows in `run` is what reports an incomplete bundle. The
 guard exists so an error mid-frame-loop still closes the capture and does
 not leave the process in a capturing state while it unwinds.
 
@@ -246,10 +252,11 @@ maps each mode to pixels so both backends produce a similarly sized frame:
 | `Fullscreen` (`--fullscreen`) | `full * s` |
 
 `--size` is the one deliberate difference: under RetroArch it is points,
-under librashader it is pixels. The README's table says so. The scale
-factor never produces a zero dimension: the fill computation floors after
-multiplying, and a degenerate `max` (a display too small to hold the
-image at 1x) falls back to the image's own size rather than zero.
+under librashader it is pixels. The README's table says so. Fill scales
+down as well as up, as RetroArch's clamp does for an image larger than
+the display. The fill computation floors after multiplying and never
+produces an empty texture: a `max` with a zero dimension, or a factor that
+floors a dimension to zero, falls back to the image's own size.
 
 ## Capture
 
@@ -388,5 +395,12 @@ confined to `src/render/`.
   may be lenient here. The design sets `RenderTarget | ShaderRead`
   explicitly and the first real run confirms it.
 - **Build time.** glslang and SPIRV-Cross compile from C++ on every clean
-  build. Measured during the plan's first task and recorded in the README's
-  Requirements section so nobody is surprised by `cargo install`.
+  build (25.6 s wall for the dependency tree alone, measured 2026-09-10).
+  The README's Requirements section says so, so nobody is surprised by
+  `cargo install`.
+- **RetroArch stays on `gpucapture`.** `MTLCaptureManager` is an
+  in-process API; using it for RetroArch would mean injecting code into
+  RetroArch's process (a `DYLD_INSERT_LIBRARIES` shim, blocked by the
+  hardened runtime on most builds, or a patched RetroArch), which the
+  2026-09-09 design rules out. `gpucapture` is Apple's out-of-process front
+  end to the same capture machinery and remains the RetroArch path.
