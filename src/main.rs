@@ -4,6 +4,7 @@ mod config;
 mod core;
 mod display;
 mod launch;
+mod remote;
 mod state;
 
 use anyhow::{Context, Result, bail};
