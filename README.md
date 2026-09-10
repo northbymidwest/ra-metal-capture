@@ -73,9 +73,12 @@ area, keeping the aspect ratio).
    `gpucapture` needs more than one present to open and close a frame
    (measured: 3, though this may vary), so the tool sends further
    `FRAMEADVANCE`s, checking after each whether the capture has finished,
-   up to a cap of 6. If an advance fails, or the cap is reached, the tool
-   kills RetroArch immediately so `gpucapture` releases instead of waiting
-   forever for a boundary that can no longer arrive, then joins the
+   up to a cap of `--frames` plus 6. If the cap is reached, the tool waits
+   up to 15 s more for gpucapture to finish writing the bundle, since a
+   large bundle can still be flushing to disk at that point. If an advance
+   fails, or the capture is still unfinished after that grace period, the
+   tool kills RetroArch immediately so `gpucapture` releases instead of
+   waiting forever for a boundary that can no longer arrive, then joins the
    capture thread and reports the error.
 5. RetroArch is asked to quit (`QUIT`, sent twice, since paused capture
    already has a command connection open and RetroArch's default
@@ -180,7 +183,7 @@ was checked and empty before the first run and after every run below.
 |---|---|---|---|
 | default `--advance` (1), run 1, `--verbose` | `/tmp/ladx-paused-1.gputrace` | 67M | succeeded |
 | default `--advance` (1), run 2 | `/tmp/ladx-paused-2.gputrace` | 67M | succeeded |
-| `--advance 30` | `/tmp/ladx-paused-30.gputrace` | n/a | failed, see Known issues |
+| `--advance 30` | `/tmp/ladx-paused-30.gputrace` | n/a | failed, see the deterministic paused capture run below |
 
 Both default-`--advance` runs printed `paused on the loaded state; arming
 capture, then advancing frame 1`, then the output path, in well under 10 s,

@@ -336,9 +336,16 @@ from.
   load. The other two builds are ad-hoc signed without the runtime flag.
 - **Silent `LOAD_STATE` failure.** RetroArch's UDP interface does not reply
   to `LOAD_STATE`, so a missing or corrupt state file fails silently; the
-  tool only confirms that RetroArch re-paused after `COMMAND_SETTLE`, not
-  that the load itself succeeded. The verbose flag passes `-v` to RetroArch
-  so its log shows the load result.
+  tool sleeps `LOAD_STATE_SETTLE` after sending it and does not confirm
+  that the load succeeded, or even that RetroArch is still paused. The
+  verbose flag passes `-v` to RetroArch so its log shows the load result.
+- **`--frames` above a small number is unverified with the paused flow.**
+  The closing-advance cap scales with `--frames`. `--frames 1` and
+  `--frames 2` have both been exercised against a real RetroArch and
+  succeeded (4 closing advances, 89M and 92M respectively); larger values
+  are expected to work the same way (gpucapture waits for that many
+  boundaries, a paused RetroArch presents once per advance) but have not
+  been measured.
 
 ## Toolchain and dependencies
 

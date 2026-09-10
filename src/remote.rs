@@ -7,7 +7,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 /// Time RetroArch is given to act on a command that produces no reply.
-/// A frame is about 17 ms; LOAD_STATE runs one frame and re-pauses.
+/// A frame is about 17 ms.
 pub const COMMAND_SETTLE: Duration = Duration::from_millis(250);
 
 /// Time given to LOAD_STATE before anything else happens. Measured:
@@ -128,6 +128,26 @@ impl Remote {
     }
 }
 
+/// Probe whether `port` already belongs to somebody else's RetroArch
+/// command interface, before we ask our own RetroArch to bind it. If the
+/// port is already bound, our appendconfig's `network_cmd_port` fails to
+/// bind and our datagrams go to whatever already holds it instead, so this
+/// guards against `PAUSE_TOGGLE`, `LOAD_STATE` and `QUIT` reaching an
+/// unrelated, running RetroArch. Any reply to `GET_STATUS` is treated as
+/// evidence the port is taken; a read timeout means it is free.
+pub fn probe_free(port: u16) -> Result<()> {
+    let remote = Remote::connect(port)?;
+    remote.send("GET_STATUS")?;
+    let mut buf = [0u8; 1024];
+    match remote.socket.recv(&mut buf) {
+        Ok(_) => bail!(
+            "UDP port {port} already answers GET_STATUS; another RetroArch \
+             has the command interface on it, choose --cmd-port"
+        ),
+        Err(_) => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,6 +246,39 @@ mod tests {
         let r = Remote::connect(f.port).unwrap();
         let err = r.pause().unwrap_err().to_string();
         assert!(err.contains("Playing"), "{err}");
+    }
+
+    #[test]
+    fn probe_free_errors_when_something_answers() {
+        let f = fake("PLAYING", true);
+        let err = probe_free(f.port).unwrap_err().to_string();
+        assert!(err.contains("already answers"), "{err}");
+    }
+
+    #[test]
+    fn probe_free_succeeds_when_nothing_listens() {
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = socket.local_addr().unwrap().port();
+        drop(socket);
+        probe_free(port).unwrap();
+    }
+
+    #[test]
+    fn stray_datagram_from_another_socket_is_ignored() {
+        let f = fake("PLAYING", false);
+        let r = Remote::connect(f.port).unwrap();
+        let local_port = r.socket.local_addr().unwrap().port();
+
+        let stranger = UdpSocket::bind("127.0.0.1:0").unwrap();
+        stranger
+            .send_to(b"GET_STATUS PLAYING game_boy,Zelda,crc32=0", ("127.0.0.1", local_port))
+            .unwrap();
+
+        // The connected socket only accepts datagrams from the fake
+        // RetroArch's address, so this must still time out rather than
+        // reading the stranger's message.
+        let err = r.status().unwrap_err().to_string();
+        assert!(err.contains("GET_STATUS"), "{err}");
     }
 
     #[test]

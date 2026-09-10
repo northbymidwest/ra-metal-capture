@@ -153,6 +153,12 @@ fn run(cli: Cli) -> Result<()> {
         bail!("shader preset not found at {}", shader.display());
     }
 
+    if cli.state.is_some() || cli.slot.is_some() {
+        // Guard against the appendconfig's network_cmd_port already
+        // belonging to somebody else's RetroArch before we launch ours.
+        remote::probe_free(cli.cmd_port)?;
+    }
+
     let tmp = tempfile::Builder::new()
         .prefix("retroarch-capture-")
         .tempdir()

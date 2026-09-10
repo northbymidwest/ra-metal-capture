@@ -73,7 +73,9 @@ impl Drop for ChildGuard {
 pub enum Trigger {
     /// Wait this long after RetroArch is capturable, then capture whatever is on screen.
     Settle(Duration),
-    /// Pause, load the configured state slot, advance `advance` frames; the last advance is captured.
+    /// Pause, load the configured state slot, advance `advance` frames before
+    /// arming the capture; the recorded frame is a fixed number of further
+    /// advances after that (see `MAX_CLOSING_ADVANCES`).
     Paused { port: u16, advance: u32 },
 }
 
@@ -174,10 +176,26 @@ fn gpucapture_start(pid: u32, frames: u32, output: &Path, on_armed: impl FnOnce(
         .stderr(Stdio::inherit())
         .spawn()
         .context("running `gpucapture start`")?;
-    let stdout = child.stdout.take().context("gpucapture stdout")?;
+    // Every early return below kills and waits the child first so a failed
+    // read never leaves a gpucapture zombie behind.
+    let stdout = match child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!("gpucapture stdout was not piped");
+        }
+    };
     let mut on_armed = Some(on_armed);
     for line in BufReader::new(stdout).lines() {
-        let line = line.context("reading gpucapture output")?;
+        let line = match line {
+            Ok(line) => line,
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(e).context("reading gpucapture output");
+            }
+        };
         if line.starts_with("triggering capture")
             && let Some(f) = on_armed.take()
         {
@@ -211,13 +229,23 @@ fn bail_if_exited(guard: &mut ChildGuard, when: &str, log_path: &Path) -> Result
 /// waiting for a boundary, once it has been launched.
 const ARM_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Cap on frame advances sent while waiting for an armed capture to close.
-/// Measured: a paused RetroArch needs three advances after arming (one
-/// never opens the capture, two open it without a drawable, three complete
-/// it); this may depend on swapchain depth, so the tool advances until the
-/// capture finishes rather than hard-coding the count, with this as a
-/// backstop against a capture that never closes.
+/// Per-frame allowance of advances sent while waiting for an armed capture
+/// to close, added to `frames` to form the actual cap. Measured: a paused
+/// RetroArch needs three advances after arming to close one frame boundary
+/// (one never opens the capture, two open it without a drawable, three
+/// complete it); this constant is that measurement with headroom, since it
+/// may depend on swapchain depth. The tool advances until the capture
+/// finishes rather than hard-coding the count, with `frames +
+/// MAX_CLOSING_ADVANCES` as a backstop against a capture that never closes.
 const MAX_CLOSING_ADVANCES: u32 = 6;
+
+/// How long to wait, once the closing-advance cap is reached, for gpucapture
+/// to finish writing the bundle before concluding the capture is stalled.
+/// gpucapture writes the bundle (tens of MB) to disk after the last frame
+/// boundary, and `is_finished()` only turns true once that write completes
+/// and the `index` check in `gpucapture_start` runs, so reaching the cap
+/// does not by itself mean the capture stalled.
+const BUNDLE_WRITE_GRACE: Duration = Duration::from_secs(15);
 
 /// Pause, load the state, advance `advance` times, then advance until the
 /// armed capture closes.
@@ -249,24 +277,58 @@ fn capture_paused(
             let _ = armed_tx.send(());
         })
     });
-    if armed_rx.recv_timeout(ARM_TIMEOUT).is_err() {
-        guard.kill_now();
-        let _ = capture.join();
-        bail!("gpucapture did not report it was armed within {ARM_TIMEOUT:?}");
+    // A paused RetroArch never releases gpucapture on its own, so both
+    // failure sub-cases below kill it first: on `Timeout` to stop it
+    // waiting for a boundary that will never come, and on `Disconnected`
+    // as cleanup, since the thread has already finished by then.
+    match armed_rx.recv_timeout(ARM_TIMEOUT) {
+        Ok(()) => {}
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            guard.kill_now();
+            let _ = capture.join();
+            bail!("gpucapture did not report it was armed within {ARM_TIMEOUT:?}");
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            // The sender was dropped because gpucapture_start returned
+            // early (missing binary, failed spawn, a read error); join and
+            // propagate its actual error instead of reporting a timeout
+            // that did not happen.
+            guard.kill_now();
+            match capture.join() {
+                Ok(Ok(())) => {
+                    bail!("gpucapture exited before reporting it was armed")
+                }
+                Ok(Err(e)) => return Err(e),
+                Err(_) => bail!("the gpucapture thread panicked"),
+            }
+        }
     }
 
     // A paused RetroArch presents only on frame advances, and gpucapture
-    // needs more than one present to open and close a frame (measured: 3).
-    // Advance until the capture thread finishes, with a hard cap.
+    // needs more than one present to open and close a frame (measured: 3
+    // per boundary). Advance until the capture thread finishes, with a cap
+    // that scales with the number of boundaries gpucapture is waiting for.
+    let max_closing = frames + MAX_CLOSING_ADVANCES;
     let mut closing = 0;
     while !capture.is_finished() {
-        if closing == MAX_CLOSING_ADVANCES {
-            guard.kill_now();
-            let _ = capture.join();
-            bail!(
-                "capture did not complete after {MAX_CLOSING_ADVANCES} frame advances; \
-                 RetroArch was killed to release gpucapture"
-            );
+        if closing == max_closing {
+            // The cap may have been reached while gpucapture is still
+            // flushing the bundle to disk; give it a grace period before
+            // concluding the capture stalled.
+            let deadline = Instant::now() + BUNDLE_WRITE_GRACE;
+            while !capture.is_finished() && Instant::now() < deadline {
+                sleep(Duration::from_millis(100));
+            }
+            if !capture.is_finished() {
+                guard.kill_now();
+                let _ = capture.join();
+                bail!(
+                    "capture did not complete after {max_closing} frame advances \
+                     and a {BUNDLE_WRITE_GRACE:?} grace period; RetroArch was \
+                     killed to release gpucapture"
+                );
+            }
+            break;
         }
         if let Err(e) = remote.frame_advance() {
             guard.kill_now();

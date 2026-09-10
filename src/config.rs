@@ -71,7 +71,8 @@ pub struct AppendConfig {
     pub window: WindowMode,
     /// When a `--state` file was staged, the temp savestate dir to point RetroArch at.
     pub staged_states_dir: Option<PathBuf>,
-    /// Configuration for paused capture mode.
+    /// Configuration for paused capture mode; `None` means the settle flow
+    /// is used instead, and no command port is enabled in the appendconfig.
     pub paused: Option<PausedConfig>,
 }
 
