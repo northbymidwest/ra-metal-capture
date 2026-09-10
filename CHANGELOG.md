@@ -2,6 +2,19 @@
 
 Notable changes per release. Dates are the publish date.
 
+## Unreleased
+
+### Added
+
+- `--image FILE`: capture a static image through RetroArch's built-in
+  image viewer core instead of an emulator core and ROM. It replaces
+  `--core` and `--rom`, and is incompatible with `--state`, `--slot`, and
+  `--advance`, since the viewer has no state to pause and load. The
+  viewer reports the image's own pixel size as its content geometry, so
+  window sizing and shader passes behave the same as with an emulator
+  core, and the existing settle flow (no `--state` or `--slot`) captures
+  it.
+
 ## 0.1.1 - 2026-09-10
 
 ### Added

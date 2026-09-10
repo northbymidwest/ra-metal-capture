@@ -25,13 +25,16 @@ never modified.
 ## CLI
 
 ```
-ra-metal-capture [OPTIONS] --core <CORE> --rom <ROM> --output <OUT.gputrace>
+ra-metal-capture [OPTIONS] --output <OUT.gputrace> (--core <CORE> --rom <ROM> | --image <IMAGE>)
 
   --app <PATH>        RetroArch .app bundle, or the binary inside it
                       [default: /Applications/RetroArch.app]
   --core <CORE>       Path to a libretro .dylib, or a bare name (e.g. "sameboy")
                       resolved as <libretro_directory>/<name>_libretro.dylib
   --rom <PATH>        Content file to load
+  --image <PATH>      Static image to load through RetroArch's built-in image
+                      viewer core, in place of --core and --rom. Conflicts
+                      with --core, --rom, --state, --slot, --advance.
   --state <PATH>      Save state file to load at launch (copied to a temp
                       savestate dir as slot 0). Conflicts with --slot.
   --slot <N>          Load slot N from the user's configured savestate dir.
@@ -157,6 +160,16 @@ slot `LOAD_STATE` reads: 0 when `--state` staged a file, or the value of
 `--slot` when a state already sits in the user's configured savestate
 directory.
 
+Image mode adds, for `--image <file>` only:
+
+```
+builtin_imageviewer_enable = "true"
+```
+
+Rendered as the last line of the appendconfig, after any window-mode keys.
+Image mode conflicts with state and paused mode, so this key never appears
+alongside the state-mode or paused-mode keys above.
+
 ### `display` - main display size
 
 `visible_size() -> Size` via `objc2-app-kit` `NSScreen::mainScreen`
@@ -179,8 +192,11 @@ pure function from a `LaunchPlan` struct to binary, args, and env. Args, in
 order:
 
 ```
--L <core> [-f] [--set-shader <preset>] --appendconfig <tmp.cfg> [-v] <rom>
+[-L <core>] [-f] [--set-shader <preset>] --appendconfig <tmp.cfg> [-v] <content>
 ```
+
+`-L <core>` is omitted in image mode, where `LaunchPlan.core` is `None` and
+`content` is the image file rather than a ROM.
 
 `-e` is never passed. Loading a state is now always driven over the UDP
 command interface (`LOAD_STATE`, see `capture` below) once RetroArch is
@@ -276,6 +292,16 @@ to the user for now.
 Parses args with `clap`, reads the base config, resolves paths, builds the
 appendconfig in a `tempfile::TempDir`, builds the command, runs the capture,
 prints the output path on success.
+
+## Image mode
+
+Measured 2026-09-10: `--image sample.png` (160x144) with
+`vectorscale.slangp`, under the default 5s settle, produced a 144M bundle.
+The appendconfig ended with `builtin_imageviewer_enable = "true"`, the
+command line carried no `-L`, and RetroArch exited cleanly with no
+leftover process. The image viewer core reports the image's own pixel
+size as its content geometry, so the window-sizing and shader machinery
+built for an emulator core applies unchanged, with no separate code path.
 
 ## Data flow
 

@@ -21,6 +21,9 @@ Nothing in your `retroarch.cfg` or savestate directory is modified: every
 override goes into a per-run appendconfig in a temp dir, and the state you
 pass in is copied there rather than loaded in place.
 
+A static image can be captured instead, through RetroArch's built-in image
+viewer, in place of an emulator core and ROM; see [Image mode](#image-mode).
+
 ## Requirements
 
 - macOS 27 or newer, with Xcode 27 or newer installed for `gpucapture`.
@@ -52,11 +55,24 @@ state, advances one frame, and writes a one-frame trace to
 `/tmp/game.gputrace`. Without `--state` or `--slot` it instead waits for
 the game to settle and captures whatever is on screen.
 
+A static image can be captured the same way, without a core or ROM:
+
+```
+ra-metal-capture \
+  --image sample.png \
+  --shader "$HOME/Library/Application Support/RetroArch/shaders/vectorscale/vectorscale.slangp" \
+  --output /tmp/sample-vectorscale.gputrace
+```
+
+`--image` replaces `--core` and `--rom` with a file loaded through
+RetroArch's built-in image viewer; see [Image mode](#image-mode) below.
+
 | flag | meaning |
 |---|---|
 | `--app PATH` | `.app` bundle or its binary. Default `/Applications/RetroArch.app`. |
 | `--core CORE` | `.dylib` path, or a bare name resolved in `libretro_directory` (`sameboy` finds `sameboy_libretro.dylib`). |
 | `--rom PATH` | content to load |
+| `--image FILE` | static image via RetroArch's image viewer; replaces `--core` and `--rom`; incompatible with `--state`, `--slot`, `--advance` |
 | `--output PATH` | output `.gputrace` path (required) |
 | `--state FILE` | save state to load; copied to a temp states dir as slot 0 |
 | `--slot N` | load slot N from your real states dir instead |
@@ -102,6 +118,31 @@ advances past the loaded state; the closing advances happen after it.
 Afterwards RetroArch is asked to quit, escalating to SIGTERM and then
 SIGKILL if it does not. A drop guard kills it on any failure, so no process
 is left behind.
+
+## Image mode
+
+`--image FILE` loads a static image through RetroArch's built-in image
+viewer core instead of an emulator core and ROM. The viewer reports the
+image's own pixel dimensions as its content geometry, so a 160x144 PNG is
+treated exactly like a Game Boy frame: window sizing, integer scale, and
+shader passes all behave the same as they would with an emulator core. The
+viewer presents continuously, so the same settle flow used without a save
+state captures it; `--state`, `--slot`, and `--advance` are not accepted
+with `--image`.
+
+To capture a raw, pre-shader frame from a save state instead of a plain
+image file, load the state in RetroArch and take a screenshot with
+`video_gpu_screenshot = "false"` set. RetroArch's own `.state.png`
+thumbnail is post-shader and unsuitable as input here.
+
+Because the image viewer never advances a frame counter, shader passes
+that depend on frame count or a history of prior frames see a permanently
+frozen image rather than the animation they would see under a running core.
+
+Verified 2026-09-10: `--image sample.png` (160x144) with
+`vectorscale.slangp` produced a 144M bundle, with the appendconfig ending
+in `builtin_imageviewer_enable = "true"` and no `-L` on the command line.
+`sample.png` is committed as the fixture used.
 
 ## Development
 
