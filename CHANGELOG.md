@@ -2,7 +2,7 @@
 
 Notable changes per release. Dates are the publish date.
 
-## Unreleased
+## 0.2.0 - 2026-09-10
 
 ### Added
 
@@ -21,8 +21,7 @@ Notable changes per release. Dates are the publish date.
   `Option<PathBuf>` (was `PathBuf`); `launch::LaunchPlan.rom` is renamed to
   `content`; `config::AppendConfig` gained the public field
   `image_viewer: bool`. Any external code constructing either struct will
-  need updating. Because of these breaks, the next release must be 0.2.0,
-  not 0.1.2.
+  need updating, which is why this is 0.2.0 rather than 0.1.2.
 
 ## 0.1.1 - 2026-09-10
 
