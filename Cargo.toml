@@ -3,7 +3,7 @@ name = "ra-metal-capture"
 version = "0.1.1"
 edition = "2024"
 rust-version = "1.98"
-description = "Launch RetroArch with a ROM, save state and shader preset, then capture frames to .gputrace with gpucapture"
+description = "Capture a Metal frame trace (.gputrace) from RetroArch"
 license = "0BSD"
 repository = "https://github.com/northbymidwest/ra-metal-capture"
 readme = "README.md"
@@ -19,6 +19,7 @@ exclude = [
     "/deny.toml",
     "/typos.toml",
     "/RELEASING.md",
+    "/sample.png",
 ]
 
 # docs.rs builds on Linux; this crate links AppKit through objc2-app-kit,

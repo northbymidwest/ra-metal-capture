@@ -3,6 +3,7 @@
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use ra_metal_capture::config::{self, AppendConfig, PausedConfig, Size, WindowMode};
+use ra_metal_capture::image::{EXTENSIONS, is_image_path};
 use ra_metal_capture::launch::{LaunchPlan, build_command};
 use ra_metal_capture::{app, capture, core, display, remote, state};
 use std::path::PathBuf;
@@ -37,23 +38,10 @@ fn parse_settle(s: &str) -> std::result::Result<f64, String> {
     Ok(v)
 }
 
-/// Path extensions RetroArch's built-in image viewer core accepts.
-pub const IMAGE_EXTENSIONS: [&str; 11] = [
-    "jpg", "jpeg", "png", "bmp", "psd", "tga", "gif", "hdr", "pic", "ppm", "pgm",
-];
-
-/// Whether `path` has an extension the built-in image viewer core accepts,
-/// checked case-insensitively.
-fn is_image_path(path: &std::path::Path) -> bool {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| IMAGE_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
-}
-
 /// Launch RetroArch with a ROM and save state, or a static image, plus a
 /// shader preset, then capture frames to a .gputrace with gpucapture.
 #[derive(Parser, Debug)]
-#[command(version, about)]
+#[command(version)]
 struct Cli {
     /// RetroArch .app bundle, or the binary inside it
     #[arg(long, default_value = "/Applications/RetroArch.app")]
@@ -77,7 +65,7 @@ struct Cli {
     )]
     rom: Option<PathBuf>,
 
-    /// Static image to load through RetroArch's built-in image viewer core
+    /// Static image to capture via RetroArch's image viewer; replaces --core and --rom
     #[arg(long, conflicts_with_all = ["core", "rom", "state", "slot", "advance"])]
     image: Option<PathBuf>,
 
@@ -173,7 +161,7 @@ fn run(cli: Cli) -> Result<()> {
             bail!(
                 "{} does not have an image extension the image viewer accepts ({})",
                 image.display(),
-                IMAGE_EXTENSIONS.join(", ")
+                EXTENSIONS.join(", ")
             );
         }
         if !image.is_file() {
@@ -292,7 +280,6 @@ fn run(cli: Cli) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     fn parse_rom(args: &[&str]) -> std::result::Result<Cli, clap::Error> {
         let mut full = vec![
@@ -402,13 +389,5 @@ mod tests {
         assert!(parse_raw(&["--core", "c"]).is_err());
         assert!(parse_raw(&["--rom", "r"]).is_err());
         assert!(parse_raw(&["--core", "c", "--rom", "r"]).is_ok());
-    }
-
-    #[test]
-    fn image_extension_check() {
-        assert!(is_image_path(Path::new("a.PNG")));
-        assert!(is_image_path(Path::new("b.jpeg")));
-        assert!(!is_image_path(Path::new("c.gbc")));
-        assert!(!is_image_path(Path::new("noext")));
     }
 }

@@ -15,6 +15,15 @@ Notable changes per release. Dates are the publish date.
   core, and the existing settle flow (no `--state` or `--slot`) captures
   it.
 
+### Changed
+
+- Breaking library API changes: `launch::LaunchPlan.core` is now
+  `Option<PathBuf>` (was `PathBuf`); `launch::LaunchPlan.rom` is renamed to
+  `content`; `config::AppendConfig` gained the public field
+  `image_viewer: bool`. Any external code constructing either struct will
+  need updating. Because of these breaks, the next release must be 0.2.0,
+  not 0.1.2.
+
 ## 0.1.1 - 2026-09-10
 
 ### Added

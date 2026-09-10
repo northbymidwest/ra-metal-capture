@@ -4,7 +4,7 @@
 
 **Goal:** Capture a shader pass over a static image using RetroArch's built-in image viewer core, with no emulator core, ROM, state, or pause dance.
 
-**Architecture:** A new `--image <file>` flag replaces `--core` plus `--rom`. RetroArch loads an image as content with its compiled-in image viewer (`builtin_imageviewer_enable`), reporting the image size as core geometry, so window sizing and shader passes behave exactly as for an emulator frame. The viewer presents continuously, so the existing settle flow captures it. Measured 2026-09-10: `sample.png` (160x144) with vectorscale.slangp captured in 0.5 s, 84M bundle.
+**Architecture:** A new `--image <file>` flag replaces `--core` plus `--rom`. RetroArch loads an image as content with its compiled-in image viewer (`builtin_imageviewer_enable`), reporting the image size as core geometry, so window sizing and shader passes behave exactly as for an emulator frame. The viewer presents continuously, so the existing settle flow captures it. Measured 2026-09-10 (spike, at RetroArch's default window size): `sample.png` (160x144) with vectorscale.slangp captured in 0.5 s, 84M bundle. The tool's own real run, at fill window size, measured 144M instead; see the README and spec for that figure.
 
 **Tech Stack:** unchanged (clap, anyhow, tempfile, nix, objc2).
 

@@ -64,8 +64,10 @@ ra-metal-capture \
   --output /tmp/sample-vectorscale.gputrace
 ```
 
-`--image` replaces `--core` and `--rom` with a file loaded through
-RetroArch's built-in image viewer; see [Image mode](#image-mode) below.
+`sample.png` is the 160x144 fixture tracked in this repository; any PNG (or
+other accepted image format) works in its place. `--image` replaces
+`--core` and `--rom` with a file loaded through RetroArch's built-in image
+viewer; see [Image mode](#image-mode) below.
 
 | flag | meaning |
 |---|---|
@@ -97,7 +99,8 @@ area, keeping the aspect ratio).
 RetroArch is exec'd directly, not via `open`, with `MTL_CAPTURE_ENABLED=1`
 in its environment so GPUToolsCapture loads into the process. Its command
 line carries the core, the shader, the ROM, and an `--appendconfig` that
-the tool writes for this run. The appendconfig sets the window size, keeps
+the tool writes for this run (in image mode there is no core, and the
+image is the content). The appendconfig sets the window size, keeps
 RetroArch rendering when unfocused, turns off config-save-on-exit and
 savestate auto-save and auto-load, and hides the load-content animation and
 on-screen text so nothing lands in the captured frame.
@@ -132,8 +135,10 @@ with `--image`.
 
 To capture a raw, pre-shader frame from a save state instead of a plain
 image file, load the state in RetroArch and take a screenshot with
-`video_gpu_screenshot = "false"` set. RetroArch's own `.state.png`
-thumbnail is post-shader and unsuitable as input here.
+`video_gpu_screenshot = "false"` set (the "GPU Screenshot" toggle under
+Settings, Video; turning it off makes RetroArch's screenshot hotkey save
+the core's raw framebuffer instead of the shaded viewport). RetroArch's
+own `.state.png` thumbnail is post-shader and unsuitable as input here.
 
 Because the image viewer never advances a frame counter, shader passes
 that depend on frame count or a history of prior frames see a permanently

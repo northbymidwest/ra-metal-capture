@@ -17,6 +17,7 @@ pub mod capture;
 pub mod config;
 pub mod core;
 pub mod display;
+pub mod image;
 pub mod launch;
 pub mod remote;
 pub mod state;

@@ -378,6 +378,10 @@ from.
   are expected to work the same way (gpucapture waits for that many
   boundaries, a paused RetroArch presents once per advance) but have not
   been measured.
+- **The settle flow does not confirm content loaded.** In the settle flow
+  (including image mode), nothing checks that the ROM or image actually
+  loaded; a corrupt or misnamed file leaves RetroArch on its menu, and the
+  menu is what gets captured.
 
 ## Toolchain and dependencies
 
