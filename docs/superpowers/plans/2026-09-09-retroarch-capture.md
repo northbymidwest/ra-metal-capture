@@ -1733,3 +1733,93 @@ git commit -m "Document usage and record the end-to-end capture result
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
+
+---
+
+### Task 11: Suppress on-screen notifications in the appendconfig
+
+Added after the first end-to-end run: the "Load Content" start animation and
+the on-screen text notifications (state loaded, controller autoconfig) were
+visible at launch and would land in a captured frame.
+
+**Files:**
+- Modify: `src/config.rs` (the common block in `AppendConfig::render` and the `COMMON` test constant)
+- Modify: `README.md` (the sentence listing what the appendconfig always sets)
+
+**Interfaces:**
+- Consumes: `config::AppendConfig::render`
+- Produces: no signature changes; two more lines in the rendered common block.
+
+- [ ] **Step 1: Update the `COMMON` test constant so the render tests fail**
+
+In `src/config.rs`, inside `mod tests`, change `COMMON` to:
+
+```rust
+    const COMMON: &str = "config_save_on_exit = \"false\"\n\
+savestate_auto_save = \"false\"\n\
+savestate_auto_load = \"false\"\n\
+pause_nonactive = \"false\"\n\
+menu_show_load_content_animation = \"false\"\n\
+video_font_enable = \"false\"\n";
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `cargo test config::tests::render`
+Expected: all 5 render tests FAIL (rendered text lacks the two new lines).
+
+- [ ] **Step 3: Add the two keys to the common block in `render`**
+
+In `AppendConfig::render`, extend the initial `lines` vector so the common block reads:
+
+```rust
+        let mut lines: Vec<(&str, String)> = vec![
+            ("config_save_on_exit", "false".into()),
+            ("savestate_auto_save", "false".into()),
+            ("savestate_auto_load", "false".into()),
+            ("pause_nonactive", "false".into()),
+            ("menu_show_load_content_animation", "false".into()),
+            ("video_font_enable", "false".into()),
+        ];
+```
+
+Why: `menu_show_load_content_animation` is the "Load Content" start animation; `video_font_enable=false` disables all OSD text rendering for the run, so no notification of any kind can appear in the captured frame. Both apply only to the per-run appendconfig.
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `cargo test && cargo clippy -- -D warnings`
+Expected: 32 tests PASS, clippy clean.
+
+- [ ] **Step 5: Update the README sentence**
+
+Replace the paragraph beginning "The appendconfig always sets" so it reads:
+
+```
+The appendconfig always sets `pause_nonactive=false` (RetroArch stops
+rendering when unfocused, which would starve the capture),
+`config_save_on_exit=false`, disables savestate auto-save and auto-load, and
+turns off the "Load Content" start animation and all on-screen text
+notifications (`menu_show_load_content_animation=false`,
+`video_font_enable=false`) so nothing lands in the captured frame.
+```
+
+- [ ] **Step 6: Re-run one capture to confirm the notifications are gone**
+
+```bash
+rm -rf /tmp/ladx-clean.gputrace
+cargo run -q -- --core sameboy \
+  --rom "/Users/mike/workplace/vibeboy/Legend of Zelda, The - Link's Awakening DX (U) (V1.2) [C][!].gbc" \
+  --state "$HOME/Documents/RetroArch/states/SameBoy/Legend of Zelda, The - Link's Awakening DX (U) (V1.2) [C][!].state" \
+  --shader "$HOME/Library/Application Support/RetroArch/shaders/shaders_slang/crt/crt-geom.slangp" \
+  --output /tmp/ladx-clean.gputrace --verbose
+```
+Expected: the printed appendconfig contains both new lines, the tool prints `/tmp/ladx-clean.gputrace`, and `du -sh` shows a bundle of tens of MB. `pgrep -fl RetroArch` is empty afterwards.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/config.rs README.md docs/superpowers/specs/2026-09-09-retroarch-capture-design.md docs/superpowers/plans/2026-09-09-retroarch-capture.md
+git commit -m "Suppress the load animation and OSD text during capture
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```

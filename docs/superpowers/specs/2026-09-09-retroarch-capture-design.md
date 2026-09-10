@@ -87,10 +87,15 @@ config_save_on_exit = "false"
 savestate_auto_save = "false"
 savestate_auto_load = "false"
 pause_nonactive = "false"
+menu_show_load_content_animation = "false"
+video_font_enable = "false"
 ```
 
 `pause_nonactive` matters because RetroArch stops rendering when its window
-is not focused, which would starve the capture of frame boundaries.
+is not focused, which would starve the capture of frame boundaries. The last
+two keep the "Load Content" start animation and every on-screen text
+notification (state loaded, controller autoconfig, and so on) out of the
+captured frame; `video_font_enable` disables all OSD text for the run.
 
 Window mode adds:
 

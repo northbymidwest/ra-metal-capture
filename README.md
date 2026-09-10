@@ -27,9 +27,11 @@ Options:
 | `--app PATH` | `.app` bundle or its binary. Default `/Applications/RetroArch.app`. |
 | `--core CORE` | `.dylib` path, or a bare name resolved in `libretro_directory` (`sameboy` finds `sameboy_libretro.dylib`). |
 | `--rom PATH` | content to load |
+| `--output PATH` | output `.gputrace` path (required) |
 | `--state FILE` | save state to load; copied to a temp states dir as slot 0 |
 | `--slot N` | load slot N from your real states dir instead |
 | `--shader PRESET` | `.slangp` / `.glslp` passed via `--set-shader` |
+| `--config PATH` | `retroarch.cfg` to base the run on; default `~/Library/Application Support/RetroArch/config/retroarch.cfg` |
 | `--size WxH` | exact window size in points |
 | `--scale N` | integer scale of the core's native resolution |
 | `--fullscreen` | launch with `-f` |
@@ -55,7 +57,10 @@ area, keeping the aspect ratio).
 
 The appendconfig always sets `pause_nonactive=false` (RetroArch stops
 rendering when unfocused, which would starve the capture),
-`config_save_on_exit=false`, and disables savestate auto-save and auto-load.
+`config_save_on_exit=false`, disables savestate auto-save and auto-load, and
+turns off the "Load Content" start animation and all on-screen text
+notifications (`menu_show_load_content_animation=false`,
+`video_font_enable=false`) so nothing lands in the captured frame.
 
 ## Verified
 

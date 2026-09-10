@@ -66,6 +66,8 @@ impl AppendConfig {
             ("savestate_auto_save", "false".into()),
             ("savestate_auto_load", "false".into()),
             ("pause_nonactive", "false".into()),
+            ("menu_show_load_content_animation", "false".into()),
+            ("video_font_enable", "false".into()),
         ];
         match &self.window {
             WindowMode::Fill { max_width, max_height } => {
@@ -149,7 +151,9 @@ mod tests {
     const COMMON: &str = "config_save_on_exit = \"false\"\n\
 savestate_auto_save = \"false\"\n\
 savestate_auto_load = \"false\"\n\
-pause_nonactive = \"false\"\n";
+pause_nonactive = \"false\"\n\
+menu_show_load_content_animation = \"false\"\n\
+video_font_enable = \"false\"\n";
 
     #[test]
     fn render_fill_mode() {
