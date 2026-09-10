@@ -93,10 +93,12 @@ For paused capture, the same `--state` (or `--slot`) plus the same
 `--advance` always produces the same emulated frame: RetroArch replays
 input-free from a fixed save state, so frame N after the load is
 deterministic. The recorded frame is `--advance` advances past the loaded
-state, plus a fixed small number of further advances the tool sends while
-waiting for the capture to close (measured at 3, printed as "capture closed
-after N further advance(s)"); that further count is identical on every run,
-so it does not affect reproducibility. That makes paused capture useful for
+state, plus the further advances the tool sends while waiting for the
+capture to close. gpucapture closes the frame on the third of those
+(measured), and any advance sent after that only runs while gpucapture is
+writing the bundle, so the printed "capture closed after N further
+advance(s)" can read 3 or 4 without changing the recorded frame. That makes
+paused capture useful for
 isolating one variable, e.g. keep the state and `--advance` fixed and change
 only `--shader` between runs to compare two shader passes over the exact
 same frame.
@@ -107,6 +109,15 @@ rendering when unfocused, which would starve the capture),
 turns off the "Load Content" start animation and all on-screen text
 notifications (`menu_show_load_content_animation=false`,
 `video_font_enable=false`) so nothing lands in the captured frame.
+
+## Open issues
+
+- **The wait after `LOAD_STATE` is a fixed 1 second.** RetroArch gives no
+  acknowledgement that a state has finished loading over its command
+  interface, so the tool sleeps and hopes; the observed latency is tens of
+  milliseconds, so the margin is large, but a slow disk or a huge state
+  could in principle advance frames from the pre-load state. Two candidate
+  signals are recorded in the design doc's known risks. Left open for now.
 
 ## Verified
 

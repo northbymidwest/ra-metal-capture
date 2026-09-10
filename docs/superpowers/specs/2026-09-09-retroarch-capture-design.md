@@ -334,11 +334,17 @@ from.
 - **Hardened runtime.** `RetroArch-nightly.app` is signed with the runtime
   flag but also `disable-library-validation`, so `GPUToolsCapture` should
   load. The other two builds are ad-hoc signed without the runtime flag.
-- **Silent `LOAD_STATE` failure.** RetroArch's UDP interface does not reply
-  to `LOAD_STATE`, so a missing or corrupt state file fails silently; the
-  tool sleeps `LOAD_STATE_SETTLE` after sending it and does not confirm
-  that the load succeeded, or even that RetroArch is still paused. The
-  verbose flag passes `-v` to RetroArch so its log shows the load result.
+- **Open issue: the post-load wait is a fixed 1 s, not a signal.** RetroArch's
+  UDP interface does not reply to `LOAD_STATE`; `LOAD_STATE_SLOT` replies,
+  but only after queueing the load task, so it means "scheduled", not
+  "loaded". The tool therefore sleeps `LOAD_STATE_SETTLE` (1 s, against an
+  observed latency of tens of ms) and confirms nothing: a missing or
+  corrupt state file fails silently, and the verbose flag is the only way
+  to see the load result in RetroArch's log. Two real signals exist if this
+  ever needs closing: poll `READ_CORE_RAM` over UDP until the paused core's
+  RAM changes (the load is the only thing that can change it while paused),
+  or, with `-v`, watch the temp log for `[State] Loading state`. Left open
+  by decision on 2026-09-10.
 - **`--frames` above a small number is unverified with the paused flow.**
   The closing-advance cap scales with `--frames`. `--frames 1` and
   `--frames 2` have both been exercised against a real RetroArch and
