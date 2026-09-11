@@ -79,12 +79,22 @@ The same command with `--backend retroarch` launches
 
 ## Architecture
 
-The binary in `src/main.rs` parses args with clap and branches early: the
-librashader backend hands a `render::RenderOptions` to `render::run` and
-never reads the RetroArch config or resolves the app. The RetroArch path
-assembles a `launch::LaunchPlan` plus a `config::AppendConfig`, renders the
-appendconfig to a temp dir, builds a `launch::LaunchCommand`, and hands it
-to `capture::run` with a `capture::CaptureOptions`.
+The binary in `src/main.rs` parses args with clap, turns them into a
+backend-neutral `backend::Request` (a `Source` that is an image or a core
+with its ROM, state, and options, plus preset, window mode, frame counts,
+output, and the config path), rejects flags meant for the other backend by
+name, and picks a `backend::Backend`: `retroarch::RetroArch` (app, command
+port, keep-running) or `hosted::Hosted`. `prepare` runs first (the hosted
+backend re-execs with `MTL_CAPTURE_ENABLED=1`), then `run`, which prints
+the bundle path as its last act. Main knows nothing about launch plans,
+cores, or Metal.
+
+`retroarch.rs` assembles a `launch::LaunchPlan` plus a
+`config::AppendConfig`, renders the appendconfig to a temp dir, builds a
+`launch::LaunchCommand`, and hands it to `capture::run` with a
+`capture::CaptureOptions`. `hosted.rs` resolves the core and state through
+`layout`, drives `libretro::Core`, and hands a `render::FrameSource` to
+`render::run`. `bundle` (recognising and clearing a `.gputrace`) is shared.
 
 `capture::run` spawns RetroArch under a drop guard that SIGKILLs it on any
 failure path, polls `gpucapture list` until the pid is capturable, then

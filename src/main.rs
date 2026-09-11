@@ -1,22 +1,16 @@
 #![deny(unsafe_code)]
 
+//! The command line: parse arguments, turn them into a backend-neutral
+//! [`Request`], pick a [`Backend`], and run it. Everything about how a
+//! capture is actually made lives in the backends.
+
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use ra_metal_capture::config::{self, AppendConfig, PausedConfig, Size, WindowMode};
-use ra_metal_capture::image::{EXTENSIONS, is_image_path};
-use ra_metal_capture::launch::{LaunchPlan, build_command};
-#[cfg(feature = "librashader")]
-use ra_metal_capture::layout::{DirResolver, Located, describe_tried, settle_frames};
-#[cfg(feature = "librashader")]
-use ra_metal_capture::libretro;
-#[cfg(feature = "librashader")]
-use ra_metal_capture::render;
-use ra_metal_capture::{app, capture, core, display, remote, state};
-#[cfg(feature = "librashader")]
-use std::collections::HashMap;
-use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use ra_metal_capture::backend::{Backend, Request, Source, StateSource};
+use ra_metal_capture::config::{self, Size, WindowMode};
+use ra_metal_capture::display;
+use ra_metal_capture::retroarch::RetroArch;
+use std::path::PathBuf;
 
 fn default_config() -> PathBuf {
     config::expand_tilde("~/Library/Application Support/RetroArch/config/retroarch.cfg")
@@ -32,26 +26,27 @@ fn parse_settle(s: &str) -> std::result::Result<f64, String> {
     Ok(v)
 }
 
-/// Which renderer a run uses.
+/// Which backend a run uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum Backend {
-    /// RetroArch's built-in image viewer, recorded with gpucapture
+enum BackendChoice {
+    /// Launches RetroArch.app and records its presented frames with gpucapture
     Retroarch,
-    /// librashader's Metal runtime in this process, recorded with MTLCaptureManager
+    /// Renders a static image or a hosted libretro core through librashader
+    /// in this process, recorded with MTLCaptureManager
     Librashader,
 }
 
 /// The backend a run uses when `--backend` is not given: the in-process
 /// renderer whenever it is compiled in, since it needs no RetroArch.
 #[cfg(feature = "librashader")]
-const DEFAULT_BACKEND: Backend = Backend::Librashader;
+const DEFAULT_BACKEND: BackendChoice = BackendChoice::Librashader;
 #[cfg(not(feature = "librashader"))]
-const DEFAULT_BACKEND: Backend = Backend::Retroarch;
+const DEFAULT_BACKEND: BackendChoice = BackendChoice::Retroarch;
 
-/// Launch RetroArch with a ROM and save state, or a static image, plus a
-/// shader preset, then capture frames to a .gputrace with gpucapture; or
-/// render a static image or a hosted libretro core through librashader
-/// in-process.
+/// Render a static image or a hosted libretro core through a shader preset
+/// in this process and record a .gputrace; or, with --backend retroarch,
+/// launch RetroArch with a ROM and save state, or a static image, and
+/// capture its frames with gpucapture.
 #[derive(Parser, Debug)]
 #[command(version)]
 struct Cli {
@@ -88,7 +83,7 @@ struct Cli {
     /// Renderer: librashader renders in this process and needs no RetroArch
     /// (the default when compiled in); retroarch launches RetroArch.app
     #[arg(long, value_enum, default_value_t = DEFAULT_BACKEND)]
-    backend: Backend,
+    backend: BackendChoice,
 
     /// Save state to load: restored into the hosted core (librashader), or
     /// staged as slot 0 for RetroArch (retroarch)
@@ -172,7 +167,6 @@ struct Cli {
 }
 
 /// Flags that only the RetroArch backend honours, as given on this command line.
-#[cfg_attr(not(feature = "librashader"), allow(dead_code))]
 fn retroarch_only_flags(cli: &Cli) -> Vec<&'static str> {
     let mut given = Vec::new();
     if cli.app.is_some() {
@@ -213,433 +207,95 @@ impl Cli {
     }
 }
 
-fn main() -> Result<()> {
-    let cli = Cli::parse();
-    #[cfg(feature = "librashader")]
-    if cli.backend == Backend::Librashader {
-        reexec_with_capture_env()?;
-    }
-    run(cli)
+/// The backend the arguments select, and the request they describe.
+/// Flags meant for the other backend are refused here, naming them, so a
+/// user who drops `--backend` does not get a silently different run.
+fn build(cli: Cli) -> Result<(Box<dyn Backend>, Request)> {
+    let backend: Box<dyn Backend> = match cli.backend {
+        BackendChoice::Retroarch => {
+            let only = librashader_only_flags(&cli);
+            if !only.is_empty() {
+                bail!(
+                    "{} only appl{} to the librashader backend",
+                    only.join(", "),
+                    if only.len() == 1 { "ies" } else { "y" }
+                );
+            }
+            let defaults = RetroArch::default();
+            Box::new(RetroArch {
+                app: cli.app.clone().unwrap_or(defaults.app),
+                cmd_port: cli.cmd_port.unwrap_or(defaults.cmd_port),
+                keep_running: cli.keep_running,
+            })
+        }
+        BackendChoice::Librashader => {
+            let ignored = retroarch_only_flags(&cli);
+            if !ignored.is_empty() {
+                bail!(
+                    "{} only appl{} to the RetroArch backend; add --backend retroarch or drop {}",
+                    ignored.join(", "),
+                    if ignored.len() == 1 { "ies" } else { "y" },
+                    if ignored.len() == 1 { "it" } else { "them" }
+                );
+            }
+            hosted_backend()?
+        }
+    };
+
+    let source = match (&cli.image, &cli.core, &cli.rom) {
+        (Some(image), _, _) => Source::Image(image.clone()),
+        (None, Some(core), Some(rom)) => Source::Core {
+            core: core.clone(),
+            rom: rom.clone(),
+            state: match (&cli.state, cli.slot) {
+                (Some(file), _) => Some(StateSource::File(file.clone())),
+                (None, Some(n)) => Some(StateSource::Slot(n)),
+                (None, None) => None,
+            },
+            options: cli.core_options.clone(),
+            skip_extension_check: cli.skip_extension_check,
+        },
+        // clap requires --image or both --core and --rom.
+        _ => bail!("--image, or --core with --rom, is required"),
+    };
+    let output = std::path::absolute(&cli.output)
+        .with_context(|| format!("resolving {}", cli.output.display()))?;
+    let request = Request {
+        source,
+        shader: cli.shader.clone(),
+        window: cli.window_mode(),
+        frames: cli.frames,
+        settle: cli.settle,
+        advance: cli.advance,
+        output,
+        config: cli.config.clone(),
+        verbose: cli.verbose,
+    };
+    Ok((backend, request))
 }
 
-/// Whether `MTL_CAPTURE_ENABLED` needs setting: Metal offers programmatic
-/// capture to a trace document only when it is exactly `1` at load time.
-///
-/// Only called from `reexec_with_capture_env` (feature-gated); without the
-/// "librashader" feature it is exercised solely by its own test.
-#[cfg_attr(not(feature = "librashader"), allow(dead_code))]
-fn needs_capture_env(current: Option<&OsStr>) -> bool {
-    current != Some(OsStr::new("1"))
-}
-
-/// Replace this process with itself, same arguments, plus
-/// `MTL_CAPTURE_ENABLED=1`, unless that is already set. `exec` only returns
-/// on failure. After the re-exec the variable is `1`, so this never loops;
-/// if Metal still refuses, `render::run` fails with a message naming it.
 #[cfg(feature = "librashader")]
-fn reexec_with_capture_env() -> Result<()> {
-    use std::os::unix::process::CommandExt;
-    if !needs_capture_env(std::env::var_os(render::CAPTURE_ENV).as_deref()) {
-        return Ok(());
-    }
-    let exe = std::env::current_exe().context("locating this executable to re-exec it")?;
-    let err = std::process::Command::new(&exe)
-        .args(std::env::args_os().skip(1))
-        .env(render::CAPTURE_ENV, "1")
-        .exec();
-    Err(err).with_context(|| {
-        format!(
-            "re-executing {} with {}=1",
-            exe.display(),
-            render::CAPTURE_ENV
-        )
-    })
-}
-
-/// `--image` must carry an extension the image viewer accepts and exist.
-fn validate_image(image: &Path) -> Result<()> {
-    if !is_image_path(image) {
-        bail!(
-            "{} does not have an image extension the image viewer accepts ({})",
-            image.display(),
-            EXTENSIONS.join(", ")
-        );
-    }
-    if !image.is_file() {
-        bail!("image not found at {}", image.display());
-    }
-    Ok(())
+fn hosted_backend() -> Result<Box<dyn Backend>> {
+    Ok(Box::new(ra_metal_capture::hosted::Hosted))
 }
 
 #[cfg(not(feature = "librashader"))]
-fn run_librashader(_cli: &Cli) -> Result<()> {
+fn hosted_backend() -> Result<Box<dyn Backend>> {
     bail!(
         "this build has no librashader backend; reinstall with the \"librashader\" \
          feature (it is on by default)"
     )
 }
 
-#[cfg(feature = "librashader")]
-fn run_librashader(cli: &Cli) -> Result<()> {
-    let ignored = retroarch_only_flags(cli);
-    if !ignored.is_empty() {
-        bail!(
-            "{} only appl{} to the RetroArch backend; add --backend retroarch or drop {}",
-            ignored.join(", "),
-            if ignored.len() == 1 { "ies" } else { "y" },
-            if ignored.len() == 1 { "it" } else { "them" }
-        );
-    }
-    let preset = cli.shader.clone().context(
-        "--backend librashader requires --shader: there is nothing to render without a preset",
-    )?;
-    if !preset.is_file() {
-        bail!("shader preset not found at {}", preset.display());
-    }
-    let output = std::path::absolute(&cli.output)
-        .with_context(|| format!("resolving {}", cli.output.display()))?;
-    // Refuse a bad output path before loading anything.
-    capture::prepare_output(&output)?;
-    let window = cli.window_mode();
-    let screen = display::main_screen();
-
-    let mut stdout: Option<StdoutToStderr> = None;
-    let (source, warmup): (Box<dyn render::FrameSource>, u32) = if let Some(image) = &cli.image {
-        validate_image(image)?;
-        (Box::new(render::ImageSource::open(image)?), 0)
-    } else {
-        let rom = cli.rom.clone().context("--rom is required with --core")?;
-        if rom
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
-        {
-            bail!(
-                "{} is a zip; this backend takes the extracted ROM (RetroArch extracts archives itself)",
-                rom.display()
-            );
-        }
-        if !rom.is_file() {
-            bail!("ROM not found at {}", rom.display());
-        }
-        let core_arg = cli
-            .core
-            .as_deref()
-            .context("--core is required without --image")?;
-        let mut dirs = DirResolver::for_config(&cli.config, cli.verbose);
-        let core_path = if Path::new(core_arg).is_file() {
-            PathBuf::from(core_arg)
-        } else {
-            let hit = dirs.locate(
-                "core",
-                |d| d.libretro_dir.clone(),
-                |dir| core::resolve_core(core_arg, dir).is_ok(),
-            );
-            match hit {
-                Located::Found(dir) => core::resolve_core(core_arg, &dir)?,
-                Located::Missing(tried) => {
-                    bail!("core {core_arg} not found in {}", describe_tried(&tried))
-                }
-            }
-        };
-        let options = match &cli.core_options {
-            Some(path) => {
-                let text = std::fs::read_to_string(path)
-                    .with_context(|| format!("reading core options {}", path.display()))?;
-                config::read_all(&text)
-            }
-            None => HashMap::new(),
-        };
-        let system_dir = {
-            let hit = dirs.locate("system directory", |d| d.system_dir.clone(), |p| p.is_dir());
-            match hit {
-                Located::Found(dir) => dir,
-                // Nothing exists anywhere; the core gets the default path and
-                // will say so itself if it needs a file from it.
-                Located::Missing(tried) => tried.into_iter().next().unwrap_or_default(),
-            }
-        };
-        let tmp = tempfile::Builder::new()
-            .prefix("ra-metal-capture-")
-            .tempdir()
-            .context("creating temp dir")?;
-
-        // A hosted core may print to stdout; keep that off the stream this
-        // tool reports the output path on, for as long as the core lives.
-        stdout = Some(StdoutToStderr::redirect()?);
-        // Open the core before initialising it: a core may read its options
-        // as early as `retro_init`, so they travel in the Context.
-        let mut core = libretro::Core::open(&core_path)?;
-        let info = core.system_info();
-        if !cli.skip_extension_check && !info.accepts_extension(&rom) {
-            bail!(
-                "{} does not have an extension {} accepts ({}); pass --skip-extension-check to load it anyway",
-                rom.display(),
-                info.library_name,
-                info.valid_extensions.join(", ")
-            );
-        }
-        core.init(libretro::Context {
-            system_dir,
-            save_dir: tmp.path().to_path_buf(),
-            options,
-        })?;
-        let av = core.load_game(&rom)?;
-        if cli.verbose {
-            eprintln!(
-                "core {} ({}x{} at {:.3} fps)",
-                info.library_name, av.base.width, av.base.height, av.fps
-            );
-        }
-
-        let state_path = match (&cli.state, cli.slot) {
-            (Some(p), _) => Some(p.clone()),
-            (None, Some(n)) => {
-                let hit = dirs.locate(
-                    "save state slot",
-                    |d| state::slot_path(&d.states, &info.library_name, &rom, n),
-                    |p| p.is_file(),
-                );
-                match hit {
-                    Located::Found(p) => Some(p),
-                    Located::Missing(tried) => {
-                        bail!("slot {n} not found at {}", describe_tried(&tried))
-                    }
-                }
-            }
-            (None, None) => None,
-        };
-        let warmup = match state_path {
-            Some(path) => {
-                let bytes = std::fs::read(&path)
-                    .with_context(|| format!("reading state {}", path.display()))?;
-                let mem = state::decode(&bytes)
-                    .with_context(|| format!("decoding state {}", path.display()))?;
-                core.restore(&mem)
-                    .with_context(|| format!("restoring state {}", path.display()))?;
-                cli.advance - 1
-            }
-            None => settle_frames(cli.settle, av.fps),
-        };
-        // `tmp` must outlive the core (it is the core's save dir); moving it
-        // into the box alongside the core keeps it alive until render::run returns.
-        (Box::new(CoreWithTemp { core, _tmp: tmp }), warmup)
-    };
-
-    let opts = render::RenderOptions {
-        source,
-        preset,
-        window,
-        screen,
-        warmup,
-        frames: cli.frames,
-        output: output.clone(),
-        verbose: cli.verbose,
-    };
-    render::run(opts)?;
-    match stdout.as_mut() {
-        Some(original) => original.print_line(&output.display().to_string())?,
-        None => println!("{}", output.display()),
-    }
-    Ok(())
-}
-
-/// A core plus the temp dir it was told to save into.
-#[cfg(feature = "librashader")]
-struct CoreWithTemp {
-    core: libretro::Core,
-    _tmp: tempfile::TempDir,
-}
-
-/// Points file descriptor 1 at descriptor 2 for the rest of the process,
-/// keeping a hosted core's stdout chatter off the stream this tool reports
-/// the output path on; the path is written through the saved original
-/// descriptor instead. Descriptor 1 is deliberately never restored: C
-/// stdio buffers a core's output and flushes it at process exit, which
-/// would land on the real stdout after any restore.
-#[cfg(feature = "librashader")]
-struct StdoutToStderr {
-    original: std::fs::File,
-}
-
-#[cfg(feature = "librashader")]
-impl StdoutToStderr {
-    fn redirect() -> Result<StdoutToStderr> {
-        use std::io::Write;
-        std::io::stdout().flush().context("flushing stdout")?;
-        let saved = nix::unistd::dup(std::io::stdout()).context("saving stdout")?;
-        nix::unistd::dup2_stdout(std::io::stderr()).context("redirecting stdout to stderr")?;
-        Ok(StdoutToStderr {
-            original: std::fs::File::from(saved),
-        })
-    }
-
-    /// Write one line to the original stdout.
-    fn print_line(&mut self, line: &str) -> Result<()> {
-        use std::io::Write;
-        writeln!(self.original, "{line}").context("writing the output path to stdout")?;
-        self.original.flush().context("flushing stdout")
-    }
-}
-
-#[cfg(feature = "librashader")]
-impl render::FrameSource for CoreWithTemp {
-    fn size(&self) -> Size {
-        self.core.size()
-    }
-    fn next(&mut self) -> Result<Vec<u8>> {
-        self.core.next()
-    }
-}
-
-fn run(cli: Cli) -> Result<()> {
-    if cli.backend == Backend::Librashader {
-        return run_librashader(&cli);
-    }
-    let only = librashader_only_flags(&cli);
-    if !only.is_empty() {
-        bail!(
-            "{} only appl{} to the librashader backend",
-            only.join(", "),
-            if only.len() == 1 { "ies" } else { "y" }
-        );
-    }
-    let app_path = cli
-        .app
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("/Applications/RetroArch.app"));
-    let cmd_port = cli.cmd_port.unwrap_or(55355);
-    let binary = app::resolve_binary(&app_path)?;
-
-    let cfg_text = std::fs::read_to_string(&cli.config)
-        .with_context(|| format!("reading {}", cli.config.display()))?;
-    let keys = config::read_keys(&cfg_text, &["libretro_directory"]);
-    let libretro_dir = keys
-        .get("libretro_directory")
-        .map(|s| config::expand_tilde(s))
-        .unwrap_or_else(|| config::expand_tilde("~/Library/Application Support/RetroArch/cores"));
-
-    let (core, content) = if let Some(image) = &cli.image {
-        validate_image(image)?;
-        (None, image.clone())
-    } else {
-        let core_arg = cli
-            .core
-            .as_deref()
-            .context("--core is required without --image")?;
-        let rom = cli
-            .rom
-            .clone()
-            .context("--rom is required without --image")?;
-        let core = core::resolve_core(core_arg, &libretro_dir)?;
-        if !rom.is_file() {
-            bail!("ROM not found at {}", rom.display());
-        }
-        (Some(core), rom)
-    };
-
-    if let Some(shader) = &cli.shader
-        && !shader.is_file()
-    {
-        bail!("shader preset not found at {}", shader.display());
-    }
-
-    if cli.state.is_some() || cli.slot.is_some() {
-        // Guard against the appendconfig's network_cmd_port already
-        // belonging to somebody else's RetroArch before we launch ours.
-        remote::probe_free(cmd_port)?;
-    }
-
-    let tmp = tempfile::Builder::new()
-        .prefix("ra-metal-capture-")
-        .tempdir()
-        .context("creating temp dir")?;
-    if !config::is_config_safe(tmp.path()) {
-        bail!(
-            "temp dir {} contains a quote or newline, which a retroarch.cfg value cannot carry; set TMPDIR to a plain path",
-            tmp.path().display()
-        );
-    }
-
-    let (paused, staged_states_dir) = match (&cli.state, cli.slot) {
-        (Some(state_file), _) => {
-            let dir = tmp.path().join("states");
-            let slot = state::stage(state_file, &content, &dir)?;
-            (
-                Some(PausedConfig {
-                    port: cmd_port,
-                    slot,
-                }),
-                Some(dir),
-            )
-        }
-        (None, Some(slot)) => (
-            Some(PausedConfig {
-                port: cmd_port,
-                slot,
-            }),
-            None,
-        ),
-        (None, None) => (None, None),
-    };
-
-    let append = AppendConfig {
-        window: cli.window_mode(),
-        staged_states_dir,
-        paused,
-        image_viewer: cli.image.is_some(),
-    };
-    let appendconfig = tmp.path().join("append.cfg");
-    std::fs::write(&appendconfig, append.render())
-        .with_context(|| format!("writing {}", appendconfig.display()))?;
-
-    let plan = LaunchPlan {
-        binary,
-        core,
-        content,
-        shader: cli.shader.clone(),
-        appendconfig,
-        fullscreen: cli.fullscreen,
-        verbose: cli.verbose,
-    };
-    let cmd = build_command(&plan);
-
-    if cli.verbose {
-        eprintln!("appendconfig:\n{}", append.render());
-        eprintln!("command: {}", cmd.display());
-    }
-
-    let output = std::path::absolute(&cli.output)
-        .with_context(|| format!("resolving {}", cli.output.display()))?;
-    let trigger = match paused {
-        Some(p) => capture::Trigger::Paused {
-            port: p.port,
-            advance: cli.advance,
-        },
-        None => capture::Trigger::Settle(Duration::from_secs_f64(cli.settle)),
-    };
-    let opts = capture::CaptureOptions {
-        trigger,
-        frames: cli.frames,
-        output: output.clone(),
-        keep_running: cli.keep_running,
-        ready_timeout: Duration::from_secs(30),
-        log_path: tmp.path().join("retroarch.log"),
-    };
-    capture::run(&cmd, &opts)?;
-
-    if cli.keep_running {
-        let kept = tmp.keep();
-        eprintln!("kept {} for the running RetroArch", kept.display());
-    }
-
-    println!("{}", output.display());
-    Ok(())
+fn main() -> Result<()> {
+    let (backend, request) = build(Cli::parse())?;
+    backend.prepare()?;
+    backend.run(request)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     fn parse_rom(args: &[&str]) -> std::result::Result<Cli, clap::Error> {
         let mut full = vec![
@@ -766,12 +422,12 @@ mod tests {
     fn backend_defaults_to_librashader_when_compiled_in() {
         assert_eq!(parse_rom(&[]).unwrap().backend, DEFAULT_BACKEND);
         #[cfg(feature = "librashader")]
-        assert_eq!(DEFAULT_BACKEND, Backend::Librashader);
+        assert_eq!(DEFAULT_BACKEND, BackendChoice::Librashader);
         #[cfg(not(feature = "librashader"))]
-        assert_eq!(DEFAULT_BACKEND, Backend::Retroarch);
+        assert_eq!(DEFAULT_BACKEND, BackendChoice::Retroarch);
         assert_eq!(
             parse_rom(&["--backend", "retroarch"]).unwrap().backend,
-            Backend::Retroarch
+            BackendChoice::Retroarch
         );
         let cli = parse_raw(&[
             "--image",
@@ -782,7 +438,7 @@ mod tests {
             "librashader",
         ])
         .unwrap();
-        assert_eq!(cli.backend, Backend::Librashader);
+        assert_eq!(cli.backend, BackendChoice::Librashader);
         assert!(parse_raw(&["--image", "s.png", "--backend", "bogus"]).is_err());
     }
 
@@ -799,7 +455,7 @@ mod tests {
             "p",
         ])
         .unwrap();
-        assert_eq!(cli.backend, Backend::Librashader);
+        assert_eq!(cli.backend, BackendChoice::Librashader);
         assert!(cli.image.is_none());
         assert!(
             parse_raw(&[
@@ -835,24 +491,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "librashader")]
-    #[test]
-    fn librashader_core_path_refuses_a_zip_before_loading_anything() {
-        let cli = parse_raw(&[
-            "--backend",
-            "librashader",
-            "--core",
-            "/nonexistent/core.dylib",
-            "--rom",
-            "/nonexistent/game.zip",
-            "--shader",
-            "Cargo.toml",
-        ])
-        .unwrap();
-        let err = run_librashader(&cli).unwrap_err().to_string();
-        assert!(err.contains("zip"), "{err}");
-    }
-
     #[test]
     fn backend_only_flags_are_detected() {
         let cli = parse_rom(&["--app", "/x", "--cmd-port", "1", "--keep-running"]).unwrap();
@@ -870,15 +508,51 @@ mod tests {
     }
 
     #[test]
-    fn retroarch_path_rejects_librashader_only_flags_before_anything_else() {
+    fn core_options_requires_core() {
+        assert!(parse_raw(&["--image", "s.png", "--core-options", "o.opt"]).is_err());
+        let cli = parse_raw(&["--core", "c", "--rom", "r", "--core-options", "o.opt"]).unwrap();
+        assert_eq!(cli.core_options, Some(PathBuf::from("o.opt")));
+    }
+
+    #[test]
+    fn build_describes_a_core_run_with_a_slot() {
+        let cli = parse_rom(&["--backend", "retroarch", "--slot", "3", "--frames", "2"]).unwrap();
+        let (_, request) = build(cli).unwrap();
+        assert_eq!(
+            request.source,
+            Source::Core {
+                core: "c".into(),
+                rom: PathBuf::from("r"),
+                state: Some(StateSource::Slot(3)),
+                options: None,
+                skip_extension_check: false,
+            }
+        );
+        assert_eq!(request.frames, 2);
+        assert!(request.output.is_absolute());
+    }
+
+    #[test]
+    fn build_describes_an_image_run() {
+        assert!(
+            parse_raw(&["--backend", "retroarch", "--image", "i.png", "--state", "s"]).is_err(),
+            "clap rejects --state with --image"
+        );
+        let cli = parse_raw(&["--backend", "retroarch", "--image", "i.png"]).unwrap();
+        let (_, request) = build(cli).unwrap();
+        assert_eq!(request.source, Source::Image(PathBuf::from("i.png")));
+    }
+
+    #[test]
+    fn build_rejects_librashader_only_flags_under_retroarch() {
         let cli = parse_rom(&["--backend", "retroarch", "--core-options", "o.opt"]).unwrap();
-        let err = run(cli).unwrap_err().to_string();
+        let err = build(cli).err().expect("an error").to_string();
         assert!(err.contains("--core-options"), "{err}");
     }
 
     #[cfg(feature = "librashader")]
     #[test]
-    fn librashader_path_rejects_retroarch_only_flags_before_anything_else() {
+    fn build_rejects_retroarch_only_flags_under_librashader() {
         let cli = parse_raw(&[
             "--image",
             "fixtures/sample.png",
@@ -887,55 +561,17 @@ mod tests {
             "/x",
         ])
         .unwrap();
-        let err = run_librashader(&cli).unwrap_err().to_string();
+        let err = build(cli).err().expect("an error").to_string();
         assert!(err.contains("--app, --keep-running"), "{err}");
         assert!(err.contains("--backend retroarch"), "{err}");
     }
 
-    #[test]
-    fn core_options_requires_core() {
-        assert!(parse_raw(&["--image", "s.png", "--core-options", "o.opt"]).is_err());
-        let cli = parse_raw(&["--core", "c", "--rom", "r", "--core-options", "o.opt"]).unwrap();
-        assert_eq!(cli.core_options, Some(PathBuf::from("o.opt")));
-    }
-
-    #[test]
-    fn capture_env_reexec_decision() {
-        use std::ffi::OsStr;
-        assert!(needs_capture_env(None));
-        assert!(needs_capture_env(Some(OsStr::new("0"))));
-        assert!(needs_capture_env(Some(OsStr::new(""))));
-        assert!(!needs_capture_env(Some(OsStr::new("1"))));
-    }
-
-    #[test]
-    fn validate_image_checks_extension_then_existence() {
-        let err = validate_image(Path::new("Cargo.toml"))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("extension"), "{err}");
-        let err = validate_image(Path::new("/nonexistent/x.png"))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("not found"), "{err}");
-        validate_image(Path::new("fixtures/sample.png")).unwrap();
-    }
-
-    #[cfg(feature = "librashader")]
-    #[test]
-    fn librashader_backend_requires_a_shader_before_touching_metal() {
-        let cli =
-            parse_raw(&["--image", "fixtures/sample.png", "--backend", "librashader"]).unwrap();
-        let err = run_librashader(&cli).unwrap_err().to_string();
-        assert!(err.contains("--shader"), "{err}");
-    }
-
     #[cfg(not(feature = "librashader"))]
     #[test]
-    fn librashader_backend_is_refused_without_the_feature() {
+    fn build_refuses_librashader_without_the_feature() {
         let cli =
             parse_raw(&["--image", "fixtures/sample.png", "--backend", "librashader"]).unwrap();
-        let err = run_librashader(&cli).unwrap_err().to_string();
+        let err = build(cli).err().expect("an error").to_string();
         assert!(err.contains("librashader"), "{err}");
     }
 }

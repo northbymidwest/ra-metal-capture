@@ -2,6 +2,32 @@
 
 Notable changes per release. Dates are the publish date.
 
+## Unreleased
+
+### Added
+
+- `backend` module: `Request`, `Source`, `StateSource`, and the `Backend`
+  trait, the one interface both backends present to the binary.
+- `retroarch::RetroArch` and `hosted::Hosted` (feature `librashader`), the
+  two backends, holding everything that used to live in the binary.
+- `bundle` module: `is_gputrace_bundle` and `prepare_output`, shared by
+  both backends.
+
+### Changed
+
+- Breaking library API: `capture::prepare_output` and
+  `capture::is_gputrace_bundle` moved to `bundle`; `layout` is no longer
+  behind the `librashader` feature.
+- The binary only parses arguments, builds a `Request`, and picks a
+  backend. Behaviour is unchanged.
+- The RetroArch backend reads `retroarch.cfg` only when resolving a bare
+  core name, and only if the core is not in the default cores directory,
+  so image mode needs no config file.
+- The hosted backend validates `--image` against the formats the `image`
+  crate decodes rather than RetroArch's image-viewer list.
+- `--help` and `--backend`'s value descriptions lead with the in-process
+  backend.
+
 ## 0.4.0 - 2026-09-11
 
 ### Added

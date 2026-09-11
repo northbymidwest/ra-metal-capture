@@ -16,7 +16,7 @@
 mod trace;
 pub use trace::{CAPTURE_ENV, Trace};
 
-use crate::capture::prepare_output;
+use crate::bundle::prepare_output;
 use crate::config::{Size, WindowMode};
 use crate::display::Screen;
 use anyhow::{Context, Result, anyhow, bail};
@@ -79,6 +79,20 @@ pub struct ImageSource {
 }
 
 impl ImageSource {
+    /// File extensions the `image` crate decodes with the features this
+    /// crate enables (see `Cargo.toml`).
+    pub const EXTENSIONS: [&str; 12] = [
+        "png", "jpg", "jpeg", "bmp", "gif", "tga", "pbm", "pgm", "ppm", "pam", "pnm", "hdr",
+    ];
+
+    /// Whether `path` has an extension in [`ImageSource::EXTENSIONS`],
+    /// case-insensitively.
+    pub fn accepts(path: &Path) -> bool {
+        path.extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| Self::EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+    }
+
     /// Take an image already in memory, converting RGBA8 to BGRA8.
     pub fn from_image(img: image::RgbaImage) -> ImageSource {
         let (width, height) = img.dimensions();

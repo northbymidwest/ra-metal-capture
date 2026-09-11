@@ -3,6 +3,11 @@
 //! interface; this library is its building blocks, so that each piece can
 //! be tested on its own and reused.
 //!
+//! The binary turns its arguments into a [`backend::Request`] and hands it
+//! to a [`backend::Backend`]: [`retroarch::RetroArch`] launches
+//! RetroArch.app, and `hosted::Hosted` (behind the `librashader` feature)
+//! renders in this process.
+//!
 //! With the `librashader` feature (on by default) the tool renders inside
 //! its own process: a static image or a hosted libretro core (`libretro`)
 //! is fed through the preset by librashader's Metal runtime (`render`),
@@ -25,17 +30,21 @@
 #![deny(unsafe_code)]
 
 pub mod app;
+pub mod backend;
+pub mod bundle;
 pub mod capture;
 pub mod config;
 pub mod core;
 pub mod display;
+#[cfg(feature = "librashader")]
+pub mod hosted;
 pub mod image;
 pub mod launch;
-#[cfg(feature = "librashader")]
 pub mod layout;
 #[cfg(feature = "librashader")]
 pub mod libretro;
 pub mod remote;
 #[cfg(feature = "librashader")]
 pub mod render;
+pub mod retroarch;
 pub mod state;
