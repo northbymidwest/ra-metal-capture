@@ -1,6 +1,6 @@
 [package]
 name = "ra-metal-capture"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.98"
 description = "Record a Metal frame trace (.gputrace) of a shader preset, in-process through librashader or from RetroArch"
