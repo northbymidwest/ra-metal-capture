@@ -15,6 +15,9 @@ Notable changes per release. Dates are the publish date.
   `Frame`, `pixels::to_bgra`.
 - `render::FrameSource` and `render::ImageSource` (`from_image` for an image
   already in memory, `open` for a file).
+- `--core-options FILE`: a RetroArch-format options file for a hosted
+  core. Without it the core runs on its built-in defaults; RetroArch's
+  per-core `.opt` file is never read implicitly.
 - `state::decode`, `state::slot_path`, `state::StateDirs`; `config::read_all`.
 
 ### Changed
@@ -23,6 +26,10 @@ Notable changes per release. Dates are the publish date.
   `source: Box<dyn FrameSource>` and the struct gains `warmup: u32`;
   `render::run` takes `RenderOptions` by value.
 - `--backend librashader` no longer requires `--image`.
+- The librashader backend resolves a bare core name, `--slot`, and the
+  system directory against RetroArch's macOS default layout first and
+  parses `retroarch.cfg` only when a default location is missing, so it
+  works on a machine without RetroArch.
 - New optional dependencies behind the `librashader` feature:
   `libretro-sys`, `libloading`, `flate2`; `deny.toml` allows ISC.
 

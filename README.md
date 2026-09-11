@@ -106,6 +106,7 @@ ra-metal-capture \
 | `--output PATH` | output `.gputrace` path (required) |
 | `--state FILE` | save state to load; copied to a temp states dir as slot 0, or under librashader restored into the hosted core after the ROM loads |
 | `--slot N` | load slot N from your real states dir instead; under librashader the file is found the way RetroArch names it under `savestate_directory` |
+| `--core-options FILE` | RetroArch-format `key = "value"` options for a hosted core; without it the core uses its built-in defaults; requires `--core` |
 | `--shader PRESET` | `.slangp` / `.glslp` passed via `--set-shader` |
 | `--config PATH` | `retroarch.cfg` to base the run on; default `~/Library/Application Support/RetroArch/config/retroarch.cfg` |
 | `--size WxH` | exact window size in points (RetroArch) or output size in pixels (librashader) |
@@ -201,8 +202,10 @@ no window, no input (every button reads as released, which is what makes
 the run repeatable), no audio. `--state` restores a RetroArch save state
 (RetroArch's compressed and container formats are both read); `--slot N`
 finds it the way RetroArch names it under `savestate_directory`. The
-core's options come from RetroArch's per-core options file, so the core
-renders with the same settings RetroArch would use. `--advance N` then
+core runs on its built-in option defaults unless `--core-options FILE`
+names a RetroArch-format options file (for example
+`~/Library/Application Support/RetroArch/config/SameBoy/SameBoy.opt`), in
+which case it renders with the same settings RetroArch would use. `--advance N` then
 runs N frames, the last of which is recorded, matching the RetroArch
 backend; without a state, `--settle` seconds of frames run first. Every
 frame before the recorded one still passes through the preset, so
@@ -213,6 +216,14 @@ Warm-up frames leave the preset's history and feedback textures holding
 real data, which the trace records, so a run with many warm-up frames
 (`--advance 30`, or the default settle) writes a bundle roughly three
 times the size of one with none.
+
+A bare core name, `--slot N`, and the system directory are resolved
+against RetroArch's macOS layout (`~/Library/Application Support/RetroArch`
+for cores, `~/Documents/RetroArch` for states and system files) without
+reading any config. Only when one of those is not where the layout says
+does the tool parse `--config` (default `retroarch.cfg`) and try the
+directories it names. A machine without RetroArch therefore works with a
+full core path, or with cores in the default folder.
 
 Only software-rendered cores are supported; a core that asks for an
 OpenGL or Vulkan context is refused. Zipped ROMs must be extracted first.

@@ -97,8 +97,8 @@ in the doc comments on `capture.rs` and in the spec.
 `libretro/mod.rs` hosts a core in this process in four steps: `Core::open`
 dlopens the `.dylib` through `libloading`, resolves every `retro_*` symbol,
 and checks `retro_api_version`; `Core::system_info` names the core, which is
-what picks its options file and its state directory, and libretro.h allows
-that call before `retro_init`; `Core::init` publishes the `Context` to the
+what picks its state directory, and libretro.h allows that call before
+`retro_init`; `Core::init` publishes the `Context` to the
 callbacks, installs them, and calls `retro_init`, so a core that reads its
 options that early sees the real values; and `Core::load_game` loads the ROM
 and returns `AvInfo`. Then `Core::restore` feeds a decoded state to
@@ -107,9 +107,11 @@ the `Frame` the core delivered. libretro's callbacks carry no user pointer,
 so everything they need lives in a process-wide static in `libretro/env.rs`,
 and `Core::open` therefore refuses a second core in the same process;
 `Drop` unloads the game, deinitializes what `init` initialized, and releases
-that slot. `Context` carries the config the `environment` callback answers
-from (system and save directories, core options read from RetroArch's
-per-core `.opt` file). A `Core` is a `render::FrameSource`, which is how
+that slot. `Context` carries what the `environment` callback answers
+from (system and save directories, and core options from `--core-options`,
+empty by default). Inferred paths (a bare core name, `--slot`, the system
+directory) go through `DirResolver` in `main.rs`: RetroArch's macOS default
+layout first, `retroarch.cfg` parsed lazily only on a miss. A `Core` is a `render::FrameSource`, which is how
 emulated frames reach the render loop.
 
 `render/mod.rs` builds BGRA8 textures, loads the preset with

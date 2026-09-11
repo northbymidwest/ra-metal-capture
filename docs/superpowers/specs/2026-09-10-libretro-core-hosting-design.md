@@ -94,10 +94,17 @@ Unchanged rules: `--state` and `--slot` conflict; `--image` conflicts with
 RetroArch-backend flags; `--app`, `--cmd-port`, and `--keep-running` are
 ignored under librashader as they are today.
 
-`--config` matters to both backends: the librashader backend reads
-`libretro_directory`, `system_directory`, `savestate_directory`,
-`sort_savestates_enable`, `sort_savestates_by_content_enable`,
-`savestates_in_content_dir`, and `rgui_config_directory` from it.
+`--config` is a fallback for the librashader backend, not an input. A bare
+core name, `--slot N`, and the system directory are resolved against
+RetroArch's macOS default layout first (`~/Library/Application
+Support/RetroArch/cores`; `~/Documents/RetroArch/states` sorted by core
+name; `~/Documents/RetroArch/system`), and `retroarch.cfg` is parsed, once
+and lazily, only when a default candidate does not exist; then
+`libretro_directory`, `savestate_directory`, the three sort flags, and
+`system_directory` are tried. A missing config file is not an error. Core
+options are never inferred: `--core-options FILE` (a RetroArch-format
+`key = "value"` file, `requires --core`) supplies them, and without it the
+core uses its built-in defaults.
 
 Exit status is non-zero, with a one-line reason on stderr, when: the core
 cannot be loaded (`dlopen` failure or a missing `retro_*` symbol); the ROM
@@ -220,12 +227,11 @@ The existing `stage` stays for the RetroArch backend.
 ### `config` - core options
 
 `src/config.rs` gains `pub fn read_all(text: &str) -> HashMap<String, String>`
-(the same `key = "value"` parser as `read_keys`, every key) and the
-librashader path reads `<rgui_config_directory>/<library_name>/<library_name>.opt`
-through it when the file exists. A missing file means the core's defaults,
-which is also what RetroArch does on first run. `core_options_path` in
-`retroarch.cfg` is not consulted; a global options file is rare and
-documented as unsupported.
+(the same `key = "value"` parser as `read_keys`, every key). The
+librashader path reads the file `--core-options` names through it and
+hands the map to the core in its `Context`. No options file is looked up
+implicitly, so a run without the flag shows the core's stock rendering
+and a run with RetroArch's per-core `.opt` file shows RetroArch's.
 
 ### `render` - frame sources
 
@@ -269,19 +275,19 @@ For image mode `warmup` is 0, preserving today's behaviour exactly.
 
 Under `--backend librashader` with `--core`:
 
-1. Read the config keys listed under CLI. Resolve the core with
-   `core::resolve_core` as today. Refuse a `.zip` ROM up front.
-2. `Core::open`, `system_info` for the library name (needed for the
-   options file and slot path), read the options file, `init` with the
-   directories and those options (so a core that reads them in
-   `retro_init` sees the real values), `load_game`.
-3. Resolve the state: `--state` is read as given; `--slot` goes through
-   `state::slot_path`. `state::decode`, then `Core::restore`.
-4. Warm-up count: `--advance - 1` with a state (so the recorded frame is
-   the `--advance`th, as under RetroArch); `round(--settle * fps)` without
-   one.
-5. Hand the core to `render::run` as the frame source, with `warmup`,
-   `frames`, and the window mode against the core's base geometry.
+1. Refuse a `.zip` ROM and a missing ROM up front. Resolve the core: a
+   path that exists is used as is; a bare name goes through the resolver
+   (defaults, then config) with `core::resolve_core`.
+2. Read `--core-options` if given. Resolve the system directory through
+   the resolver (a miss everywhere falls back to the default path).
+3. `Core::open`, `system_info` for the library name, `init` with the
+   `Context`, `load_game`.
+4. Resolve the state: `--state` is read as given; `--slot` goes through
+   the resolver with `state::slot_path`. `state::decode`, then
+   `Core::restore`.
+5. Warm-up count: `--advance - 1` with a state; `round(--settle * fps)`
+   without, with 60 fps substituted when the core reports none.
+6. Hand the core to `render::run` as the frame source.
 
 The `MTL_CAPTURE_ENABLED` re-exec happens before any of this, as today.
 Image mode goes through the same `render::run` with an `ImageSource` and
@@ -291,7 +297,7 @@ Image mode goes through the same `render::run` with an `ImageSource` and
 
 ```
 args + retroarch.cfg
-  -> resolve core dylib, system dir, options file, state path
+  -> resolve core dylib, system dir, state path (defaults, then config on a miss); read --core-options
   -> Core::open (dlopen, resolve, api version) -> system_info -> options
   -> Core::init (Context, callbacks, retro_init)
   -> Core::load_game (retro_load_game, av info -> base size)
@@ -370,6 +376,13 @@ state through `gpucapture` and leaves no process behind. Frame content was
 checked against the spike's rendered frames and the state's `.state.png`
 thumbnail, not in Xcode's GPU debugger.
 
+Re-verified 2026-09-11 after the defaults-first resolution and the
+`--core-options` flag landed: `--slot 0` with `--core-options` pointing at
+RetroArch's `SameBoy.opt` captured two frames in 1.8 s; the same without
+the flag ran on the core's defaults; and `--slot 0 --config
+/nonexistent/retroarch.cfg` resolved the state from the default layout
+without a config file. All three produced 3071x2764 px bundles.
+
 ## Repository policy changes
 
 - **Dependencies** (all behind the `librashader` feature): `libretro-sys`
@@ -415,6 +428,6 @@ thumbnail, not in Xcode's GPU debugger.
   statics are a consequence of the libretro ABI, not a shortcut.
 - **Parity with the RetroArch backend is by construction, not by
   measurement.** The same state and `--advance` should record the same
-  emulated frame; RetroArch's core options file makes the core render
-  it the same way. Confirmed once for SameBoy in the spike; other cores
+  emulated frame; `--core-options` pointed at RetroArch's per-core file
+  makes the core render it the same way. Confirmed once for SameBoy in the spike; other cores
   are confirmed by their first real run.

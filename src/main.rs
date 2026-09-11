@@ -99,6 +99,11 @@ struct Cli {
     #[arg(long, conflicts_with = "state")]
     slot: Option<u32>,
 
+    /// Core options file (RetroArch `key = "value"` format) for a hosted core;
+    /// without it the core runs on its built-in defaults
+    #[arg(long, requires = "core", conflicts_with = "image")]
+    core_options: Option<PathBuf>,
+
     /// Shader preset (.slangp / .glslp)
     #[arg(long)]
     shader: Option<PathBuf>,
@@ -262,25 +267,50 @@ fn run_librashader(cli: &Cli) -> Result<()> {
         if !rom.is_file() {
             bail!("ROM not found at {}", rom.display());
         }
-        let cfg = RetroArchDirs::read(&cli.config)?;
         let core_arg = cli
             .core
             .as_deref()
             .context("--core is required without --image")?;
-        let core_path = core::resolve_core(core_arg, &cfg.libretro_dir)?;
+        let mut dirs = DirResolver::for_config(&cli.config, cli.verbose);
+        let core_path = if Path::new(core_arg).is_file() {
+            PathBuf::from(core_arg)
+        } else {
+            let hit = dirs.locate(
+                "core",
+                |d| d.libretro_dir.clone(),
+                |dir| core::resolve_core(core_arg, dir).is_ok(),
+            );
+            match hit.found {
+                Some(dir) => core::resolve_core(core_arg, &dir)?,
+                None => bail!(
+                    "core {core_arg} not found in {}",
+                    describe_tried(&hit.tried)
+                ),
+            }
+        };
+        let options = match &cli.core_options {
+            Some(path) => {
+                let text = std::fs::read_to_string(path)
+                    .with_context(|| format!("reading core options {}", path.display()))?;
+                config::read_all(&text)
+            }
+            None => HashMap::new(),
+        };
+        let system_dir = {
+            let hit = dirs.locate("system directory", |d| d.system_dir.clone(), |p| p.is_dir());
+            hit.found.unwrap_or_else(|| hit.tried[0].clone())
+        };
         let tmp = tempfile::Builder::new()
             .prefix("ra-metal-capture-")
             .tempdir()
             .context("creating temp dir")?;
 
-        // Open the core before initialising it: its library name picks the
-        // options file and the slot directory, and a core may read its
-        // options as early as `retro_init`, so they travel in the Context.
+        // Open the core before initialising it: a core may read its options
+        // as early as `retro_init`, so they travel in the Context.
         let mut core = libretro::Core::open(&core_path)?;
         let info = core.system_info();
-        let options = cfg.core_options(&info.library_name)?;
         core.init(libretro::Context {
-            system_dir: cfg.system_dir.clone(),
+            system_dir,
             save_dir: tmp.path().to_path_buf(),
             options,
         })?;
@@ -294,7 +324,17 @@ fn run_librashader(cli: &Cli) -> Result<()> {
 
         let state_path = match (&cli.state, cli.slot) {
             (Some(p), _) => Some(p.clone()),
-            (None, Some(n)) => Some(state::slot_path(&cfg.states, &info.library_name, &rom, n)),
+            (None, Some(n)) => {
+                let hit = dirs.locate(
+                    "save state slot",
+                    |d| state::slot_path(&d.states, &info.library_name, &rom, n),
+                    |p| p.is_file(),
+                );
+                match hit.found {
+                    Some(p) => Some(p),
+                    None => bail!("slot {n} not found at {}", describe_tried(&hit.tried)),
+                }
+            }
             (None, None) => None,
         };
         let warmup = match state_path {
@@ -355,64 +395,155 @@ impl render::FrameSource for CoreWithTemp {
     }
 }
 
-/// The RetroArch config keys the librashader core path reads.
+/// Where RetroArch keeps the things a hosted core needs. The values come
+/// from RetroArch's Darwin platform driver: user documents under
+/// `~/Documents/RetroArch`, hidden app data under
+/// `~/Library/Application Support/RetroArch`.
 #[cfg(feature = "librashader")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct RetroArchDirs {
     libretro_dir: PathBuf,
     system_dir: PathBuf,
-    config_dir: PathBuf,
     states: state::StateDirs,
 }
 
 #[cfg(feature = "librashader")]
 impl RetroArchDirs {
-    fn read(path: &Path) -> Result<RetroArchDirs> {
-        let text =
-            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        let keys = config::read_all(&text);
-        let dir = |key: &str, default: &str| {
-            keys.get(key)
-                .map(|s| config::expand_tilde(s))
-                .unwrap_or_else(|| config::expand_tilde(default))
-        };
-        let flag = |key: &str, default: bool| keys.get(key).map(|v| v == "true").unwrap_or(default);
-        Ok(RetroArchDirs {
-            libretro_dir: dir(
-                "libretro_directory",
-                "~/Library/Application Support/RetroArch/cores",
-            ),
-            system_dir: dir(
-                "system_directory",
-                "~/Library/Application Support/RetroArch/system",
-            ),
-            config_dir: dir(
-                "rgui_config_directory",
-                "~/Library/Application Support/RetroArch/config",
-            ),
+    /// RetroArch's macOS defaults, with states sorted into per-core folders.
+    fn defaults() -> RetroArchDirs {
+        RetroArchDirs {
+            libretro_dir: config::expand_tilde("~/Library/Application Support/RetroArch/cores"),
+            system_dir: config::expand_tilde("~/Documents/RetroArch/system"),
             states: state::StateDirs {
-                savestate_directory: dir(
-                    "savestate_directory",
-                    "~/Library/Application Support/RetroArch/states",
-                ),
-                sort_by_core: flag("sort_savestates_enable", true),
-                sort_by_content: flag("sort_savestates_by_content_enable", false),
-                in_content_dir: flag("savestates_in_content_dir", false),
+                savestate_directory: config::expand_tilde("~/Documents/RetroArch/states"),
+                sort_by_core: true,
+                sort_by_content: false,
+                in_content_dir: false,
             },
-        })
-    }
-
-    /// `<config dir>/<core name>/<core name>.opt`, or empty when absent.
-    fn core_options(&self, library_name: &str) -> Result<HashMap<String, String>> {
-        let path = self
-            .config_dir
-            .join(library_name)
-            .join(format!("{library_name}.opt"));
-        match std::fs::read_to_string(&path) {
-            Ok(text) => Ok(config::read_all(&text)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(HashMap::new()),
-            Err(e) => Err(e).with_context(|| format!("reading core options {}", path.display())),
         }
     }
+
+    /// The directories a `retroarch.cfg` names, with the defaults filling
+    /// any key it leaves out.
+    fn from_config(text: &str) -> RetroArchDirs {
+        let keys = config::read_all(text);
+        let base = RetroArchDirs::defaults();
+        let dir = |key: &str, default: PathBuf| {
+            keys.get(key)
+                .map(|s| config::expand_tilde(s))
+                .unwrap_or(default)
+        };
+        let flag = |key: &str, default: bool| keys.get(key).map(|v| v == "true").unwrap_or(default);
+        RetroArchDirs {
+            libretro_dir: dir("libretro_directory", base.libretro_dir),
+            system_dir: dir("system_directory", base.system_dir),
+            states: state::StateDirs {
+                savestate_directory: dir("savestate_directory", base.states.savestate_directory),
+                sort_by_core: flag("sort_savestates_enable", base.states.sort_by_core),
+                sort_by_content: flag(
+                    "sort_savestates_by_content_enable",
+                    base.states.sort_by_content,
+                ),
+                in_content_dir: flag("savestates_in_content_dir", base.states.in_content_dir),
+            },
+        }
+    }
+}
+
+/// What [`DirResolver::locate`] found: the first candidate that exists, and
+/// every candidate it tried, defaults first.
+#[cfg(feature = "librashader")]
+struct Located {
+    found: Option<PathBuf>,
+    tried: Vec<PathBuf>,
+}
+
+/// Resolves paths inferred from RetroArch's layout: the defaults are tried
+/// first, and `retroarch.cfg` is parsed (once, lazily) only when a default
+/// candidate does not exist. A machine without RetroArch therefore works
+/// with the default layout and never needs a config file.
+#[cfg(feature = "librashader")]
+struct DirResolver<'a> {
+    defaults: RetroArchDirs,
+    /// Reads the config text, or `None` when there is no config file.
+    load_config: Box<dyn FnOnce() -> Option<String> + 'a>,
+    /// `None` until first needed; then the parsed config, or `None` if absent.
+    config: Option<Option<RetroArchDirs>>,
+    verbose: bool,
+}
+
+#[cfg(feature = "librashader")]
+impl<'a> DirResolver<'a> {
+    fn new(
+        defaults: RetroArchDirs,
+        load_config: impl FnOnce() -> Option<String> + 'a,
+        verbose: bool,
+    ) -> DirResolver<'a> {
+        DirResolver {
+            defaults,
+            load_config: Box::new(load_config),
+            config: None,
+            verbose,
+        }
+    }
+
+    /// The resolver for the `retroarch.cfg` at `path`, absent or not.
+    fn for_config(path: &'a Path, verbose: bool) -> DirResolver<'a> {
+        DirResolver::new(
+            RetroArchDirs::defaults(),
+            move || std::fs::read_to_string(path).ok(),
+            verbose,
+        )
+    }
+
+    fn locate(
+        &mut self,
+        what: &str,
+        pick: impl Fn(&RetroArchDirs) -> PathBuf,
+        exists: impl Fn(&Path) -> bool,
+    ) -> Located {
+        let candidate = pick(&self.defaults);
+        if exists(&candidate) {
+            return Located {
+                found: Some(candidate),
+                tried: vec![],
+            };
+        }
+        let mut tried = vec![candidate];
+        if self.config.is_none() {
+            let loader = std::mem::replace(&mut self.load_config, Box::new(|| None));
+            self.config = Some(loader().map(|text| RetroArchDirs::from_config(&text)));
+        }
+        if let Some(Some(cfg)) = &self.config {
+            let candidate = pick(cfg);
+            if candidate != tried[0] && exists(&candidate) {
+                if self.verbose {
+                    eprintln!(
+                        "{what}: not at the default {}; using {} from retroarch.cfg",
+                        tried[0].display(),
+                        candidate.display()
+                    );
+                }
+                return Located {
+                    found: Some(candidate),
+                    tried,
+                };
+            }
+            if candidate != tried[0] {
+                tried.push(candidate);
+            }
+        }
+        Located { found: None, tried }
+    }
+}
+
+#[cfg(feature = "librashader")]
+fn describe_tried(tried: &[PathBuf]) -> String {
+    tried
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(" or ")
 }
 
 fn run(cli: Cli) -> Result<()> {
@@ -743,6 +874,122 @@ mod tests {
         .unwrap();
         let err = run_librashader(&cli).unwrap_err().to_string();
         assert!(err.contains("zip"), "{err}");
+    }
+
+    #[test]
+    fn core_options_requires_core() {
+        assert!(parse_raw(&["--image", "s.png", "--core-options", "o.opt"]).is_err());
+        let cli = parse_raw(&["--core", "c", "--rom", "r", "--core-options", "o.opt"]).unwrap();
+        assert_eq!(cli.core_options, Some(PathBuf::from("o.opt")));
+    }
+
+    #[cfg(feature = "librashader")]
+    #[test]
+    fn retroarch_dirs_from_config_overrides_only_named_keys() {
+        let text =
+            "savestate_directory = \"/elsewhere/states\"\nsort_savestates_enable = \"false\"\n";
+        let d = RetroArchDirs::from_config(text);
+        let base = RetroArchDirs::defaults();
+        assert_eq!(d.libretro_dir, base.libretro_dir);
+        assert_eq!(d.system_dir, base.system_dir);
+        assert_eq!(
+            d.states.savestate_directory,
+            PathBuf::from("/elsewhere/states")
+        );
+        assert!(!d.states.sort_by_core);
+        assert!(!d.states.sort_by_content);
+        assert!(!d.states.in_content_dir);
+        assert!(base.states.sort_by_core);
+    }
+
+    #[cfg(feature = "librashader")]
+    fn fake_dirs(system: &str) -> RetroArchDirs {
+        RetroArchDirs {
+            libretro_dir: PathBuf::from("/d/cores"),
+            system_dir: PathBuf::from(system),
+            states: RetroArchDirs::defaults().states,
+        }
+    }
+
+    #[cfg(feature = "librashader")]
+    #[test]
+    fn resolver_takes_the_default_without_reading_the_config() {
+        use std::cell::Cell;
+        let loaded = Cell::new(false);
+        let mut r = DirResolver::new(
+            fake_dirs("/d/system"),
+            || {
+                loaded.set(true);
+                Some("system_directory = \"/c/system\"".into())
+            },
+            false,
+        );
+        let hit = r.locate(
+            "system",
+            |d| d.system_dir.clone(),
+            |p| p == Path::new("/d/system"),
+        );
+        assert_eq!(hit.found.as_deref(), Some(Path::new("/d/system")));
+        assert!(hit.tried.is_empty());
+        assert!(
+            !loaded.get(),
+            "config must not be read when the default exists"
+        );
+    }
+
+    #[cfg(feature = "librashader")]
+    #[test]
+    fn resolver_falls_back_to_the_config_and_reads_it_once() {
+        use std::cell::Cell;
+        let loads = Cell::new(0);
+        let mut r = DirResolver::new(
+            fake_dirs("/d/system"),
+            || {
+                loads.set(loads.get() + 1);
+                Some("system_directory = \"/c/system\"".into())
+            },
+            false,
+        );
+        let hit = r.locate(
+            "system",
+            |d| d.system_dir.clone(),
+            |p| p == Path::new("/c/system"),
+        );
+        assert_eq!(hit.found.as_deref(), Some(Path::new("/c/system")));
+        assert_eq!(hit.tried, vec![PathBuf::from("/d/system")]);
+        let again = r.locate(
+            "system",
+            |d| d.system_dir.clone(),
+            |p| p == Path::new("/c/system"),
+        );
+        assert_eq!(again.found.as_deref(), Some(Path::new("/c/system")));
+        assert_eq!(loads.get(), 1, "config parsed once");
+    }
+
+    #[cfg(feature = "librashader")]
+    #[test]
+    fn resolver_reports_every_candidate_when_nothing_exists() {
+        let mut r = DirResolver::new(
+            fake_dirs("/d/system"),
+            || Some("system_directory = \"/c/system\"".into()),
+            false,
+        );
+        let hit = r.locate("system", |d| d.system_dir.clone(), |_| false);
+        assert!(hit.found.is_none());
+        assert_eq!(
+            hit.tried,
+            vec![PathBuf::from("/d/system"), PathBuf::from("/c/system")]
+        );
+        assert_eq!(describe_tried(&hit.tried), "/d/system or /c/system");
+    }
+
+    #[cfg(feature = "librashader")]
+    #[test]
+    fn resolver_without_a_config_file_tries_the_default_only() {
+        let mut r = DirResolver::new(fake_dirs("/d/system"), || None, false);
+        let hit = r.locate("system", |d| d.system_dir.clone(), |_| false);
+        assert!(hit.found.is_none());
+        assert_eq!(hit.tried, vec![PathBuf::from("/d/system")]);
     }
 
     #[cfg(feature = "librashader")]
