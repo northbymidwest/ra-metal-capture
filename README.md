@@ -11,16 +11,6 @@ window, and records presented frames with Apple's `gpucapture(1)`. RetroArch
 runs Vulkan through MoltenVK, which is what makes the trace Metal. The
 result opens in Xcode's GPU debugger like any other capture.
 
-Given a save state, the tool loads it with RetroArch paused, advances a
-fixed number of frames, and captures. RetroArch replays input-free from a
-fixed state, so the same state and the same advance count record the same
-emulated frame every run. That makes it possible to change one thing, such
-as the shader preset, and compare two captures of the exact same frame.
-
-Nothing in your `retroarch.cfg` or savestate directory is modified: every
-override goes into a per-run appendconfig in a temp dir, and the state you
-pass in is copied there rather than loaded in place.
-
 A static image can be captured instead, through RetroArch's built-in image
 viewer, in place of an emulator core and ROM; see [Image mode](#image-mode).
 
