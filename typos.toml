@@ -2,3 +2,5 @@
 # dependencies or from RetroArch and cannot respell go under
 # [default.extend-words]; there are none yet.
 [default.extend-words]
+# `flate2` is the crate that inflates RetroArch RZIP state files.
+flate = "flate"
