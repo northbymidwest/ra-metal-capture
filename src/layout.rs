@@ -1,9 +1,11 @@
-//! Where RetroArch keeps things on macOS, and how a hosted core's inferred
-//! paths (a bare core name, a save-state slot, the system directory) are
+//! Where RetroArch keeps things on macOS, and how the paths a run infers
+//! (a bare core name, a save-state slot, the system directory) are
 //! resolved against that layout: the defaults first, `retroarch.cfg` only
-//! when a default candidate is missing.
+//! when a default candidate is missing. Both backends resolve through
+//! here, and this is the only use either makes of the user's config.
 
-use crate::{config, state};
+use crate::{config, core, state};
+use anyhow::{Result, bail};
 use std::path::{Path, PathBuf};
 
 /// Where RetroArch keeps the things a hosted core needs. The values come
@@ -115,9 +117,25 @@ impl<'a> DirResolver<'a> {
         pick: impl Fn(&RetroArchDirs) -> PathBuf,
         exists: impl Fn(&Path) -> bool,
     ) -> Located {
+        match self.locate_layout(what, &pick, exists) {
+            Ok(layout) => Located::Found(pick(layout)),
+            Err(tried) => Located::Missing(tried),
+        }
+    }
+
+    /// Like [`DirResolver::locate`], but returns the whole layout whose
+    /// candidate exists, for a caller that needs more of it than the one
+    /// path (how states are sorted, say). `Err` carries every candidate
+    /// tried, the default first.
+    pub fn locate_layout(
+        &mut self,
+        what: &str,
+        pick: impl Fn(&RetroArchDirs) -> PathBuf,
+        exists: impl Fn(&Path) -> bool,
+    ) -> std::result::Result<&RetroArchDirs, Vec<PathBuf>> {
         let candidate = pick(&self.defaults);
         if exists(&candidate) {
-            return Located::Found(candidate);
+            return Ok(&self.defaults);
         }
         let mut tried = vec![candidate];
         if let Some(load) = self.load_config.take() {
@@ -133,13 +151,45 @@ impl<'a> DirResolver<'a> {
                         candidate.display()
                     );
                 }
-                return Located::Found(candidate);
+                return Ok(cfg);
             }
             if candidate != tried[0] {
                 tried.push(candidate);
             }
         }
-        Located::Missing(tried)
+        Err(tried)
+    }
+
+    /// A core path as given, or a bare name found in the cores directory:
+    /// the default location first, `retroarch.cfg`'s `libretro_directory`
+    /// only if the default has no such core.
+    pub fn core(&mut self, core_arg: &str) -> Result<PathBuf> {
+        if Path::new(core_arg).is_file() {
+            return Ok(PathBuf::from(core_arg));
+        }
+        match self.locate(
+            "core",
+            |d| d.libretro_dir.clone(),
+            |dir| core::resolve_core(core_arg, dir).is_ok(),
+        ) {
+            Located::Found(dir) => core::resolve_core(core_arg, &dir),
+            Located::Missing(tried) => {
+                bail!("core {core_arg} not found in {}", describe_tried(&tried))
+            }
+        }
+    }
+
+    /// The system directory a core reads BIOS files from: the first that
+    /// exists, or the default when none does, so a core that needs
+    /// nothing from it still runs and one that does names the path itself.
+    pub fn system_dir(&mut self) -> PathBuf {
+        match self.locate("system directory", |d| d.system_dir.clone(), |p| p.is_dir()) {
+            Located::Found(dir) => dir,
+            Located::Missing(tried) => tried
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| RetroArchDirs::defaults().system_dir),
+        }
     }
 }
 
@@ -269,6 +319,76 @@ mod tests {
         let mut r = DirResolver::new(fake_dirs("/d/system"), || None, false);
         let hit = r.locate("system", |d| d.system_dir.clone(), |_| false);
         assert_eq!(hit, Located::Missing(vec![PathBuf::from("/d/system")]));
+    }
+
+    #[test]
+    fn locate_layout_returns_the_layout_the_candidate_came_from() {
+        let mut r = DirResolver::new(
+            fake_dirs("/d/system"),
+            || {
+                Some(
+                    "savestate_directory = \"/c/states\"\nsort_savestates_enable = \"false\""
+                        .into(),
+                )
+            },
+            false,
+        );
+        let layout = r
+            .locate_layout(
+                "states",
+                |d| d.states.savestate_directory.clone(),
+                |p| p == Path::new("/c/states"),
+            )
+            .unwrap();
+        assert_eq!(
+            layout.states.savestate_directory,
+            PathBuf::from("/c/states")
+        );
+        assert!(
+            !layout.states.sort_by_core,
+            "the config's flags come with its directory"
+        );
+        let tried = r
+            .locate_layout(
+                "states",
+                |d| d.states.savestate_directory.clone(),
+                |_| false,
+            )
+            .unwrap_err();
+        assert_eq!(tried.len(), 2);
+    }
+
+    #[test]
+    fn core_takes_a_file_path_as_given_and_names_every_dir_tried() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dylib = tmp.path().join("x_libretro.dylib");
+        std::fs::write(&dylib, b"").unwrap();
+        let mut r = DirResolver::new(fake_dirs("/d/system"), || None, false);
+        assert_eq!(r.core(dylib.to_str().unwrap()).unwrap(), dylib);
+        let err = r.core("nope").unwrap_err().to_string();
+        assert!(err.contains("/d/cores"), "{err}");
+        let mut r = DirResolver::new(
+            RetroArchDirs {
+                libretro_dir: tmp.path().to_path_buf(),
+                ..fake_dirs("/d/system")
+            },
+            || None,
+            false,
+        );
+        assert_eq!(r.core("x").unwrap(), dylib);
+    }
+
+    #[test]
+    fn system_dir_falls_back_to_the_default_candidate() {
+        let mut r = DirResolver::new(
+            fake_dirs("/nonexistent/system"),
+            || Some("system_directory = \"/also/nonexistent\"".into()),
+            false,
+        );
+        assert_eq!(r.system_dir(), PathBuf::from("/nonexistent/system"));
+        let tmp = tempfile::tempdir().unwrap();
+        let mut r = DirResolver::new(fake_dirs(tmp.path().to_str().unwrap()), || None, false);
+        assert_eq!(r.system_dir(), tmp.path());
     }
 
     #[test]

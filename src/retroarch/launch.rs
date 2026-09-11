@@ -11,8 +11,9 @@ pub struct LaunchPlan {
     pub binary: PathBuf,
     pub core: Option<PathBuf>,
     pub content: PathBuf,
-    pub shader: Option<PathBuf>,
-    pub appendconfig: PathBuf,
+    pub shader: PathBuf,
+    /// The per-run `retroarch.cfg` RetroArch is launched on.
+    pub config: PathBuf,
     pub fullscreen: bool,
     pub verbose: bool,
 }
@@ -26,7 +27,10 @@ pub struct LaunchCommand {
 }
 
 /// Pure assembly of the RetroArch invocation.
-/// Order: `[-L <core>] [-f] [--set-shader <p>] --appendconfig <cfg> [-v] <content>`.
+/// Order: `[-L <core>] [-f] --set-shader <p> -c <cfg> --sram-mode
+/// noload-nosave [-v] <content>`. The SRAM mode makes RetroArch neither
+/// read nor write `.srm`/`.rtc` files for the run, so the user's saves
+/// are never touched whatever directory the config names.
 /// Env: `MTL_CAPTURE_ENABLED=1` so GPUToolsCapture loads into RetroArch.
 pub fn build_command(plan: &LaunchPlan) -> LaunchCommand {
     let mut args: Vec<OsString> = Vec::new();
@@ -37,12 +41,12 @@ pub fn build_command(plan: &LaunchPlan) -> LaunchCommand {
     if plan.fullscreen {
         args.push("-f".into());
     }
-    if let Some(shader) = &plan.shader {
-        args.push("--set-shader".into());
-        args.push(shader.as_os_str().into());
-    }
-    args.push("--appendconfig".into());
-    args.push(plan.appendconfig.as_os_str().into());
+    args.push("--set-shader".into());
+    args.push(plan.shader.as_os_str().into());
+    args.push("-c".into());
+    args.push(plan.config.as_os_str().into());
+    args.push("--sram-mode".into());
+    args.push("noload-nosave".into());
     if plan.verbose {
         args.push("-v".into());
     }
@@ -87,8 +91,8 @@ mod tests {
             binary: PathBuf::from("/Applications/RetroArch.app/Contents/MacOS/RetroArch"),
             core: Some(PathBuf::from("/cores/sameboy_libretro.dylib")),
             content: PathBuf::from("/roms/z.gb"),
-            shader: None,
-            appendconfig: PathBuf::from("/tmp/run/append.cfg"),
+            shader: PathBuf::from("/shaders/crt.slangp"),
+            config: PathBuf::from("/tmp/run/retroarch.cfg"),
             fullscreen: false,
             verbose: false,
         }
@@ -110,8 +114,12 @@ mod tests {
             [
                 "-L",
                 "/cores/sameboy_libretro.dylib",
-                "--appendconfig",
-                "/tmp/run/append.cfg",
+                "--set-shader",
+                "/shaders/crt.slangp",
+                "-c",
+                "/tmp/run/retroarch.cfg",
+                "--sram-mode",
+                "noload-nosave",
                 "/roms/z.gb",
             ]
         );
@@ -122,10 +130,9 @@ mod tests {
     }
 
     #[test]
-    fn fullscreen_shader_and_verbose_in_order() {
+    fn fullscreen_and_verbose_in_order() {
         let mut p = plan();
         p.fullscreen = true;
-        p.shader = Some(PathBuf::from("/shaders/crt.slangp"));
         p.verbose = true;
         let cmd = build_command(&p);
         assert_eq!(
@@ -136,8 +143,10 @@ mod tests {
                 "-f",
                 "--set-shader",
                 "/shaders/crt.slangp",
-                "--appendconfig",
-                "/tmp/run/append.cfg",
+                "-c",
+                "/tmp/run/retroarch.cfg",
+                "--sram-mode",
+                "noload-nosave",
                 "-v",
                 "/roms/z.gb",
             ]
@@ -161,7 +170,15 @@ mod tests {
         p.content = PathBuf::from("/img/sample.png");
         assert_eq!(
             strs(&build_command(&p)),
-            ["--appendconfig", "/tmp/run/append.cfg", "/img/sample.png"]
+            [
+                "--set-shader",
+                "/shaders/crt.slangp",
+                "-c",
+                "/tmp/run/retroarch.cfg",
+                "--sram-mode",
+                "noload-nosave",
+                "/img/sample.png"
+            ]
         );
     }
 }

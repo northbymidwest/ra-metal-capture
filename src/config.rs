@@ -1,6 +1,6 @@
 //! Reading `key = "value"` files as RetroArch writes them, and the sizes
-//! both backends share. The RetroArch appendconfig lives in
-//! `retroarch::appendconfig`.
+//! both backends share. The RetroArch per-run config lives in
+//! `retroarch::runconfig`.
 
 use std::collections::HashMap;
 use std::path::PathBuf;

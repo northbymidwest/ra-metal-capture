@@ -19,7 +19,8 @@ pub enum Source {
         core: String,
         rom: PathBuf,
         state: Option<StateSource>,
-        /// A RetroArch-format options file for a hosted core.
+        /// A RetroArch-format core options file. Without one the core runs
+        /// on its built-in defaults under either backend.
         options: Option<PathBuf>,
         /// Load the ROM even if its extension is not one the core declares.
         skip_extension_check: bool,
@@ -39,8 +40,8 @@ pub enum StateSource {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Request {
     pub source: Source,
-    /// The preset. Required by the hosted backend, optional for RetroArch.
-    pub shader: Option<PathBuf>,
+    /// The preset to render through.
+    pub shader: PathBuf,
     pub window: WindowMode,
     /// Frames to record.
     pub frames: u32,
@@ -51,9 +52,9 @@ pub struct Request {
     /// Absolute path of the `.gputrace` to write.
     pub output: PathBuf,
     /// A `retroarch.cfg` to consult when a path inferred from RetroArch's
-    /// default layout is missing. `None` means consult nothing, as on a
-    /// machine without RetroArch; a `Some` that does not exist is treated
-    /// the same way.
+    /// default layout is missing. That is the only use either backend
+    /// makes of it. `None` means consult nothing, as on a machine without
+    /// RetroArch; a `Some` that does not exist is treated the same way.
     pub config: Option<PathBuf>,
     pub verbose: bool,
 }

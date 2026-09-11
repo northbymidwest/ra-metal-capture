@@ -132,7 +132,7 @@ impl Remote {
 
 /// Probe whether `port` already belongs to somebody else's RetroArch
 /// command interface, before we ask our own RetroArch to bind it. If the
-/// port is already bound, our appendconfig's `network_cmd_port` fails to
+/// port is already bound, our run config's `network_cmd_port` fails to
 /// bind and our datagrams go to whatever already holds it instead, so this
 /// guards against `PAUSE_TOGGLE`, `LOAD_STATE` and `QUIT` reaching an
 /// unrelated, running RetroArch. Any reply to `GET_STATUS` is treated as

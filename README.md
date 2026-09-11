@@ -26,9 +26,10 @@ debugger like any other capture.
   backend needs Xcode for Metal's capture layer and to open the resulting
   trace; the RetroArch backend needs its `gpucapture`. Older versions are
   untested and unsupported.
-- For `--backend retroarch` only, a RetroArch.app with its `video_driver`
-  set to `vulkan` (the default on macOS). The tool has been run against the
-  release, nightly, and debug builds.
+- For `--backend retroarch` only, a RetroArch.app. The tool launches it on
+  a config of its own that selects the Vulkan driver, so your
+  `retroarch.cfg` needs no particular settings. The tool has been run
+  against the release, nightly, and debug builds.
 - Rust 1.98 or newer to build.
 - The default build compiles librashader and its C++ dependencies (glslang,
   SPIRV-Cross) from source, about 30 s on an M-series Mac for a clean
@@ -106,14 +107,14 @@ ra-metal-capture \
 | `--core CORE` | `.dylib` path, or a bare name (`sameboy` finds `sameboy_libretro.dylib`) looked up in RetroArch's default cores directory, then in the `libretro_directory` your `retroarch.cfg` names if it is not there |
 | `--rom PATH` | content to load |
 | `--image FILE` | static image via RetroArch's image viewer; replaces `--core` and `--rom`; incompatible with `--state`, `--slot`, `--advance` |
-| `--backend NAME` | renderer: `librashader` (the default whenever the feature is compiled in) or `retroarch` (the default in a `--no-default-features` build); `librashader` requires `--shader` and takes either `--image` or `--core` with `--rom`; rejects `--app`, `--cmd-port`, `--keep-running`, which only the RetroArch backend honours |
+| `--backend NAME` | renderer: `librashader` (the default whenever the feature is compiled in) or `retroarch` (the default in a `--no-default-features` build); `librashader` takes either `--image` or `--core` with `--rom` and rejects `--app`, `--cmd-port`, `--keep-running`, which only the RetroArch backend honours |
 | `--output PATH` | output `.gputrace` path (required) |
 | `--state FILE` | save state to load; copied to a temp states dir as slot 0, or under librashader restored into the hosted core after the ROM loads |
-| `--slot N` | load slot N from your real states dir instead; under librashader the file is found the way RetroArch names it under `savestate_directory` |
-| `--core-options FILE` | RetroArch-format `key = "value"` options for a hosted core; without it the core uses its built-in defaults; requires `--core`; librashader only |
+| `--slot N` | load slot N from your states directory instead (RetroArch's default location, or the one your `retroarch.cfg` names when the default is missing); under librashader the file is found the way RetroArch names it |
+| `--core-options FILE` | RetroArch-format `key = "value"` options for the core; without it the core runs on its built-in defaults under either backend; requires `--core` |
 | `--skip-extension-check` | load a ROM whose extension the core does not declare; by default a mismatch is an error naming what the core accepts; librashader only |
-| `--shader PRESET` | `.slangp` / `.glslp` passed via `--set-shader` |
-| `--config PATH` | the `retroarch.cfg` consulted only when a bare core name, `--slot`, or the system directory is not at RetroArch's default location; default `~/Library/Application Support/RetroArch/config/retroarch.cfg`, and it need not exist |
+| `--shader PRESET` | `.slangp` / `.glslp` to render through (required); passed to RetroArch as `--set-shader` |
+| `--config PATH` | the `retroarch.cfg` consulted only when a bare core name, `--slot`, or the system directory is not at RetroArch's default location; nothing else in it is used by either backend; default `~/Library/Application Support/RetroArch/config/retroarch.cfg`, and it need not exist |
 | `--size WxH` | exact window size in points (RetroArch) or output size in pixels (librashader) |
 | `--scale N` | integer scale of the core's native resolution, in window points (RetroArch) or output pixels (librashader) |
 | `--fullscreen` | launch with `-f` (RetroArch) or render at the main display's full pixel size (librashader) |
@@ -122,7 +123,7 @@ ra-metal-capture \
 | `--cmd-port PORT` | UDP port for RetroArch's command interface, enabled only for this run (default 55355); RetroArch backend only, rejected under librashader |
 | `--frames N` | frame boundaries to record (RetroArch) or frames to render with the frame count advancing (librashader) (default 1) |
 | `--keep-running` | do not close RetroArch afterwards; RetroArch backend only, rejected under librashader |
-| `-v` | print the command line and appendconfig, pass `-v` to RetroArch |
+| `-v` | print the command line and run config, pass `-v` to RetroArch |
 
 By default the window is windowed and as large as fits the main display
 (RetroArch scales the core output up and clamps it to the display's visible
@@ -132,19 +133,34 @@ area, keeping the aspect ratio).
 
 RetroArch is exec'd directly, not via `open`, with `MTL_CAPTURE_ENABLED=1`
 in its environment so GPUToolsCapture loads into the process. Its command
-line carries the core, the shader, the ROM, and an `--appendconfig` that
-the tool writes for this run (in image mode there is no core, and the
-image is the content). The appendconfig sets the window size, keeps
-RetroArch rendering when unfocused, turns off config-save-on-exit and
-savestate auto-save and auto-load, and hides the load-content animation and
-on-screen text so nothing lands in the captured frame.
+line carries the core, the shader, the ROM, and `-c` naming a
+`retroarch.cfg` the tool writes for this run (in image mode there is no
+core, and the image is the content). That file is RetroArch's whole config
+for the run: your own `retroarch.cfg` is not read by it, and every key the
+file leaves out takes RetroArch's compiled default. It selects the Vulkan
+driver, enables shaders, sets the window size, names your system directory
+for BIOS files, points the core at a per-run save directory and a per-run
+core options file (a copy of `--core-options`, or empty so the core runs
+on its defaults), keeps RetroArch rendering when unfocused, turns off
+config-save-on-exit, savestate auto-save and auto-load, config and remap
+overrides, and the content history, and hides the load-content animation
+and on-screen text so nothing lands in the captured frame. RetroArch is
+also launched with `--sram-mode noload-nosave`, so it never reads or
+writes `.srm` and `.rtc` files: your save data is untouched, and the game
+boots from empty SRAM as a hosted core does (a save state carries its own
+SRAM, so `--state` and `--slot` are unaffected). The only use
+the tool makes of your `retroarch.cfg` is to find a bare core name, a
+`--slot`, or the system directory when they are not in RetroArch's default
+places; see [Cores](#cores).
 
 **Without a state**, the tool polls `gpucapture list` until the process is
 capturable, waits `--settle` seconds, then runs `gpucapture start`, which
 blocks until the trace is written.
 
-**With a state**, the appendconfig also enables RetroArch's UDP command
-interface for this run and points `state_slot` at the slot to load. Once
+**With a state**, the run config also enables RetroArch's UDP command
+interface for this run and points `savestate_directory` and `state_slot`
+at the slot to load: a temp directory holding a copy of `--state`, or
+your own states directory for `--slot`. Once
 the process is capturable the tool pauses RetroArch over that interface,
 sends `LOAD_STATE`, frame-advances `--advance` times, and arms `gpucapture`.
 A paused RetroArch only presents on a frame advance, and `gpucapture` needs
@@ -213,11 +229,12 @@ the run repeatable), no audio. `--state` restores a RetroArch save state
 finds it the way RetroArch names it under `savestate_directory`. The
 ROM must carry an extension the core declares it accepts (SameBoy: gb,
 gbc, and so on) unless `--skip-extension-check` is given, so a file of the
-wrong kind is refused instead of loaded as a cartridge. The
-core runs on its built-in option defaults unless `--core-options FILE`
-names a RetroArch-format options file (for example
+wrong kind is refused instead of loaded as a cartridge. Under either
+backend the core runs on its built-in option defaults unless
+`--core-options FILE` names a RetroArch-format options file (for example
+the per-core file RetroArch keeps at
 `~/Library/Application Support/RetroArch/config/SameBoy/SameBoy.opt`), in
-which case it renders with the same settings RetroArch would use. `--advance N` then
+which case it renders with the settings that file holds. `--advance N` then
 runs N frames, the last of which is recorded, matching the RetroArch
 backend; without a state, `--settle` seconds of frames run first. Every
 frame before the recorded one still passes through the preset, so
@@ -231,7 +248,8 @@ size of one with none: about nine times in the measured runs. The tool
 prints a line on stderr before a long warm-up so the pause is not mistaken
 for a hang.
 
-A bare core name, `--slot N`, and the system directory are resolved
+Under either backend, a bare core name, `--slot N`, and the system
+directory are resolved
 against RetroArch's macOS layout (`~/Library/Application Support/RetroArch`
 for cores, `~/Documents/RetroArch` for states and system files) without
 reading any config. Only when one of those is not where the layout says

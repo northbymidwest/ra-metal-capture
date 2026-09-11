@@ -12,7 +12,7 @@ use crate::{bundle, display, state};
 use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// The in-process backend. It has no configuration of its own: everything
 /// it needs is in the request or RetroArch's on-disk layout.
@@ -45,9 +45,7 @@ impl Backend for Hosted {
     }
 
     fn run(&self, request: Request) -> Result<()> {
-        let preset = request.shader.clone().context(
-            "the librashader backend requires --shader: there is nothing to render without a preset",
-        )?;
+        let preset = request.shader.clone();
         if !preset.is_file() {
             bail!("shader preset not found at {}", preset.display());
         }
@@ -73,20 +71,7 @@ impl Backend for Hosted {
                     bail!("ROM not found at {}", rom.display());
                 }
                 let mut dirs = DirResolver::for_config(request.config.as_deref(), request.verbose);
-                let core_path = if Path::new(core_arg).is_file() {
-                    PathBuf::from(core_arg)
-                } else {
-                    match dirs.locate(
-                        "core",
-                        |d| d.libretro_dir.clone(),
-                        |dir| crate::core::resolve_core(core_arg, dir).is_ok(),
-                    ) {
-                        Located::Found(dir) => crate::core::resolve_core(core_arg, &dir)?,
-                        Located::Missing(tried) => {
-                            bail!("core {core_arg} not found in {}", describe_tried(&tried))
-                        }
-                    }
-                };
+                let core_path = dirs.core(core_arg)?;
                 let options = match options {
                     Some(path) => {
                         let text = std::fs::read_to_string(path)
@@ -95,18 +80,7 @@ impl Backend for Hosted {
                     }
                     None => HashMap::new(),
                 };
-                let system_dir =
-                    match dirs.locate("system directory", |d| d.system_dir.clone(), |p| p.is_dir())
-                    {
-                        Located::Found(dir) => dir,
-                        // Nothing exists anywhere; the core gets the default path
-                        // and will say so itself if it needs a file from it.
-                        // `tried` always starts with the default candidate.
-                        Located::Missing(tried) => match tried.first() {
-                            Some(default) => default.clone(),
-                            None => crate::layout::RetroArchDirs::defaults().system_dir,
-                        },
-                    };
+                let system_dir = dirs.system_dir();
                 let tmp = tempfile::Builder::new()
                     .prefix("ra-metal-capture-")
                     .tempdir()
@@ -264,11 +238,12 @@ impl StdoutToStderr {
 mod tests {
     use super::*;
     use crate::config::WindowMode;
+    use std::path::PathBuf;
 
-    fn request(source: Source, shader: Option<&str>) -> Request {
+    fn request(source: Source, shader: &str) -> Request {
         Request {
             source,
-            shader: shader.map(PathBuf::from),
+            shader: PathBuf::from(shader),
             window: WindowMode::Fullscreen,
             frames: 1,
             settle: 5.0,
@@ -280,15 +255,15 @@ mod tests {
     }
 
     #[test]
-    fn requires_a_shader_before_touching_metal() {
+    fn refuses_a_missing_shader_before_touching_metal() {
         let err = Hosted
             .run(request(
                 Source::Image(PathBuf::from("fixtures/sample.png")),
-                None,
+                "/nonexistent/p.slangp",
             ))
             .unwrap_err()
             .to_string();
-        assert!(err.contains("--shader"), "{err}");
+        assert!(err.contains("shader preset not found"), "{err}");
     }
 
     #[test]
@@ -302,7 +277,7 @@ mod tests {
                     options: None,
                     skip_extension_check: false,
                 },
-                Some("Cargo.toml"),
+                "Cargo.toml",
             ))
             .unwrap_err()
             .to_string();

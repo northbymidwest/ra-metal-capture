@@ -18,7 +18,7 @@
 //!
 //! The RetroArch backend, selected with `--backend retroarch`, assembles a
 //! [`retroarch::launch::LaunchPlan`] and an
-//! [`retroarch::appendconfig::AppendConfig`], turns them into a
+//! [`retroarch::runconfig::RunConfig`], turns them into a
 //! [`retroarch::launch::LaunchCommand`], and hands that to
 //! [`retroarch::capture::run`] with a [`retroarch::capture::CaptureOptions`].
 //! Paused capture drives RetroArch over its UDP command interface through

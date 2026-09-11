@@ -64,9 +64,16 @@ The same command with `--backend retroarch` launches
   objc2's debug-build method check panics on one it cannot find
   (`hasUnifiedMemory` did; `supportsFamily` works). Any new device call in
   `src/hosted/render/` needs a real debug-build run before it is trusted.
-- Never write the user's `retroarch.cfg` or savestate directory. Every
-  RetroArch override goes into a per-run appendconfig in a temp dir, and a
-  `--state` file is copied there rather than loaded in place.
+- The user's `retroarch.cfg` is read for one thing only: locating a bare
+  core name, a `--slot`, or the system directory when it is not in
+  RetroArch's default place (`layout::DirResolver`, defaults first). It is
+  never written, and neither are the user's states or saves. RetroArch is
+  launched on a per-run config in a temp dir (`-c`) that
+  `retroarch::runconfig::RunConfig` writes from scratch, so any setting a
+  run needs (the Vulkan driver, `video_shader_enable`) must be in that
+  file; nothing else supplies it. Every launch passes `--sram-mode
+  noload-nosave` so RetroArch never touches `.srm`/`.rtc` files. A
+  `--state` file is copied into the temp dir rather than loaded in place.
 - `deny.toml` lists exactly the licenses the tree uses with
   `unused-allowed-license = "deny"`; adding or dropping a dependency may
   require editing that list.
@@ -89,12 +96,14 @@ backend re-execs with `MTL_CAPTURE_ENABLED=1`), then `run`, which prints
 the bundle path as its last act. Main knows nothing about launch plans,
 cores, or Metal.
 
-`retroarch/mod.rs` assembles a `launch::LaunchPlan` plus an
-`appendconfig::AppendConfig`, renders the appendconfig to a temp dir, builds a
+`retroarch/mod.rs` assembles a `launch::LaunchPlan` plus a
+`runconfig::RunConfig`, renders the run config to a temp dir, builds a
 `launch::LaunchCommand`, and hands it to `capture::run` with a
 `capture::CaptureOptions`. `hosted/mod.rs` resolves the core and state through
 `layout`, drives `libretro::Core`, and hands a `render::FrameSource` to
-`render::run`. `bundle` (recognising and clearing a `.gputrace`) is shared.
+`render::run`. `bundle` (recognising and clearing a `.gputrace`) and
+`layout::DirResolver` (core, system directory, states, defaults first and
+`retroarch.cfg` only on a miss) are shared.
 
 `capture::run` spawns RetroArch under a drop guard that SIGKILLs it on any
 failure path, polls `gpucapture list` until the pid is capturable, then
@@ -121,9 +130,7 @@ and `Core::open` therefore refuses a second core in the same process;
 `Drop` unloads the game, deinitializes what `init` initialized, and releases
 that slot. `Context` carries what the `environment` callback answers
 from (system and save directories, and core options from `--core-options`,
-empty by default). Inferred paths (a bare core name, `--slot`, the system
-directory) go through `DirResolver` in `main.rs`: RetroArch's macOS default
-layout first, `retroarch.cfg` parsed lazily only on a miss. A `Core` is a `render::FrameSource`, which is how
+empty by default). A `Core` is a `render::FrameSource`, which is how
 emulated frames reach the render loop.
 
 `hosted/render/mod.rs` builds BGRA8 textures, loads the preset with
@@ -139,8 +146,8 @@ modes to pixels (RetroArch's are points): `Exact` is pixels as given,
 `Scale` multiplies the source size, `Fullscreen` and the default fill use
 `display::Screen`'s backing scale.
 
-`retroarch::appendconfig::AppendConfig` is the single place RetroArch
-settings are overridden; `config::WindowMode` is shared by both backends.
+`retroarch::runconfig::RunConfig` is the single place RetroArch settings
+are set; `config::WindowMode` is shared by both backends.
 The source tree mirrors the split: shared modules at the top of `src/`,
 everything RetroArch-only under `src/retroarch/`, everything in-process
 under `src/hosted/` behind the feature. `display`
@@ -149,8 +156,9 @@ off the main thread, which is what every test sees.
 
 Unit tests live inline and are deterministic: config rendering, argument
 parsing and conflicts, output sizing, the `gpucapture list` parser, and the
-UDP protocol against a fake on 127.0.0.1. The one GPU-dependent module,
-`hosted::render`, has no unit tests by design.
+UDP protocol against a fake on 127.0.0.1. `hosted::render` tests its sizing
+and image conversion; its render loop touches the GPU and has no unit
+tests by design.
 
 ## Releasing
 

@@ -15,6 +15,35 @@ Notable changes per release. Dates are the publish date.
 
 ### Changed
 
+- `--shader` is required for every run; the RetroArch backend always
+  passes it as `--set-shader`, so a capture of whatever shader RetroArch
+  had configured is no longer a thing this tool does.
+- The RetroArch backend launches RetroArch on a `retroarch.cfg` written
+  for the run (`-c`) instead of an appendconfig layered over the user's.
+  The file holds only what the run needs (the Vulkan driver, shaders on,
+  the window, the system directory, a per-run save directory, a per-run
+  core options file, the state slot when there is one); every other key
+  takes RetroArch's compiled default. Nothing in the user's config reaches
+  the run, so a RetroArch whose `video_driver` is not `vulkan` needs no
+  change, and per-core option files, config overrides, remaps, auto shader
+  presets, and the content history are all out of the picture. RetroArch
+  is launched with `--sram-mode noload-nosave` and a per-run save
+  directory, so it never reads or writes `.srm`/`.rtc` files; earlier
+  versions let RetroArch flush SRAM into the user's saves on exit, which
+  after a state load rewrote the game's `.srm` with the state's SRAM.
+- `--core-options` applies to both backends. Without it a core under
+  RetroArch now runs on its built-in defaults, as a hosted core always
+  did, instead of the per-core options RetroArch had saved.
+- Both backends consult the user's `retroarch.cfg` for one thing only:
+  locating a bare core name, `--slot`, or the system directory when it is
+  not in RetroArch's default place. `--slot N` under RetroArch resolves
+  the states directory that way and lets RetroArch find the slot in it.
+- Breaking library API: `retroarch::appendconfig` is
+  `retroarch::runconfig`, `AppendConfig` is `RunConfig` and its `render`
+  returns a `Result`, `PausedConfig` carries a `StateDirs`,
+  `LaunchPlan.appendconfig` is `config`, and `LaunchPlan.shader` and
+  `Request.shader` are plain `PathBuf`s. `DirResolver` gained
+  `locate_layout`, `core`, and `system_dir`, which both backends use.
 - Breaking library API: the source tree is grouped by backend. `app`,
   `capture`, `launch`, `remote`, and `image` are now `retroarch::app` and
   so on; `AppendConfig`, `PausedConfig`, and `is_config_safe` moved from
