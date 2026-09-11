@@ -2,9 +2,9 @@
 //! Xcode's `gpucapture(1)`, driving the paused frame-advance flow, and
 //! shutting RetroArch down afterwards (or killing it on any failure).
 
+use super::launch::LaunchCommand;
+use super::remote::Remote;
 use crate::bundle::{discard_partial, prepare_output};
-use crate::launch::LaunchCommand;
-use crate::remote::Remote;
 use anyhow::{Context, Result, bail};
 use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;

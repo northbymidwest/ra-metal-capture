@@ -449,7 +449,7 @@ impl Drop for Core {
     }
 }
 
-impl crate::render::FrameSource for Core {
+impl crate::hosted::render::FrameSource for Core {
     fn size(&self) -> Size {
         self.size()
     }

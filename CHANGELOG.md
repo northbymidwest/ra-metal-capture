@@ -15,7 +15,11 @@ Notable changes per release. Dates are the publish date.
 
 ### Changed
 
-- Breaking library API: `capture::prepare_output` and
+- Breaking library API: the source tree is grouped by backend. `app`,
+  `capture`, `launch`, `remote`, and `image` are now `retroarch::app` and
+  so on; `AppendConfig`, `PausedConfig`, and `is_config_safe` moved from
+  `config` to `retroarch::appendconfig`; `render` and `libretro` are
+  `hosted::render` and `hosted::libretro`. `capture::prepare_output` and
   `capture::is_gputrace_bundle` moved to `bundle`; `layout` is no longer
   behind the `librashader` feature.
 - The binary only parses arguments, builds a `Request`, and picks a

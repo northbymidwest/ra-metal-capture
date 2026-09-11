@@ -10,42 +10,36 @@
 //! renders in this process.
 //!
 //! With the `librashader` feature (on by default) the tool renders inside
-//! its own process: a static image or a hosted libretro core (`libretro`)
-//! is fed through the preset by librashader's Metal runtime (`render`),
+//! its own process: a static image or a hosted libretro core
+//! (`hosted::libretro`) is fed through the preset by librashader's Metal
+//! runtime (`hosted::render`),
 //! and the trace is written with Metal's capture API. `state` decodes
 //! RetroArch save states for that path. No RetroArch process is involved.
 //!
 //! The RetroArch backend, selected with `--backend retroarch`, assembles a
-//! [`launch::LaunchPlan`] and an [`config::AppendConfig`], turns them into
-//! a [`launch::LaunchCommand`], and hands that to [`capture::run`] with a
-//! [`capture::CaptureOptions`]. Paused capture drives RetroArch over its
-//! UDP command interface through [`remote::Remote`].
+//! [`retroarch::launch::LaunchPlan`] and an
+//! [`retroarch::appendconfig::AppendConfig`], turns them into a
+//! [`retroarch::launch::LaunchCommand`], and hands that to
+//! [`retroarch::capture::run`] with a [`retroarch::capture::CaptureOptions`].
+//! Paused capture drives RetroArch over its UDP command interface through
+//! [`retroarch::remote::Remote`].
 //!
 //! Requires macOS 27 and Xcode 27 at run time; nothing here touches Metal,
 //! RetroArch, or `gpucapture` until a run starts.
 //!
 //! docs.rs builds this crate without default features, because the
 //! librashader dependency tree's C++ does not cross-build there, so the
-//! `render` and `libretro` modules are absent from the published
+//! `hosted` module is absent from the published
 //! documentation. The README describes them.
 #![deny(unsafe_code)]
 
-pub mod app;
 pub mod backend;
 pub mod bundle;
-pub mod capture;
 pub mod config;
 pub mod core;
 pub mod display;
 #[cfg(feature = "librashader")]
 pub mod hosted;
-pub mod image;
-pub mod launch;
 pub mod layout;
-#[cfg(feature = "librashader")]
-pub mod libretro;
-pub mod remote;
-#[cfg(feature = "librashader")]
-pub mod render;
 pub mod retroarch;
 pub mod state;

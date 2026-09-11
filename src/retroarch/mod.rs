@@ -1,13 +1,23 @@
 //! The RetroArch backend: launch a RetroArch.app with the request's core,
 //! content, state, and preset, and record its presented frames with Apple's
-//! `gpucapture(1)`.
+//! `gpucapture(1)`. The submodules are its parts: locating the app,
+//! assembling the command line and appendconfig, driving the capture, and
+//! the UDP command interface.
+
+pub mod app;
+pub mod appendconfig;
+pub mod capture;
+pub mod image;
+pub mod launch;
+pub mod remote;
 
 use crate::backend::{Backend, Request, Source, StateSource};
-use crate::config::{self, AppendConfig, PausedConfig};
-use crate::launch::{LaunchPlan, build_command};
+use crate::config;
 use crate::layout::{DirResolver, Located, describe_tried};
-use crate::{app, capture, core, display, image, remote, state};
+use crate::{core, display, state};
 use anyhow::{Context, Result, bail};
+use appendconfig::{AppendConfig, PausedConfig, is_config_safe};
+use launch::{LaunchPlan, build_command};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -77,7 +87,7 @@ impl Backend for RetroArch {
             .prefix("ra-metal-capture-")
             .tempdir()
             .context("creating temp dir")?;
-        if !config::is_config_safe(tmp.path()) {
+        if !is_config_safe(tmp.path()) {
             bail!(
                 "temp dir {} contains a quote or newline, which a retroarch.cfg value cannot carry; set TMPDIR to a plain path",
                 tmp.path().display()

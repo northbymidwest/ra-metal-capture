@@ -2,10 +2,13 @@
 //! in this process, through the preset with librashader's Metal runtime,
 //! and write the trace with Metal's capture API. No RetroArch process.
 
+pub mod libretro;
+pub mod render;
+
 use crate::backend::{Backend, Request, Source, StateSource};
 use crate::config::{self, Size};
 use crate::layout::{DirResolver, Located, describe_tried, settle_frames};
-use crate::{bundle, display, libretro, render, state};
+use crate::{bundle, display, state};
 use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
 use std::ffi::OsStr;
