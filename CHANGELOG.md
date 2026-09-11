@@ -25,6 +25,11 @@ Notable changes per release. Dates are the publish date.
 - Breaking library API: `render::RenderOptions.image` is replaced by
   `source: Box<dyn FrameSource>` and the struct gains `warmup: u32`;
   `render::run` takes `RenderOptions` by value.
+- Breaking: `librashader` is the default backend whenever the feature is
+  compiled in. `--core --rom` without `--backend` now hosts the core in
+  this process, and `--shader` is required by default; pass `--backend
+  retroarch` for the RetroArch capture. A `--no-default-features` build
+  still defaults to `retroarch`.
 - `--backend librashader` no longer requires `--image`.
 - The librashader backend resolves a bare core name, `--slot`, and the
   system directory against RetroArch's macOS default layout first and

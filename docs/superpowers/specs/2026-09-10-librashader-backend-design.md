@@ -1,5 +1,9 @@
 # librashader backend design
 
+> Amended 2026-09-11: `librashader` became the default backend whenever
+> the feature is compiled in; `--backend retroarch` selects the RetroArch
+> capture. Statements below that call `retroarch` the default describe
+> the design as first shipped.
 A second backend for image mode. Today `--image FILE` loads a static image
 through RetroArch's built-in image viewer and records RetroArch's presented
 frames with `gpucapture(1)`. This design adds `--backend librashader`, which

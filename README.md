@@ -5,35 +5,35 @@
 [![docs.rs](https://docs.rs/ra-metal-capture/badge.svg)](https://docs.rs/ra-metal-capture)
 [![CI](https://github.com/northbymidwest/ra-metal-capture/actions/workflows/ci.yml/badge.svg)](https://github.com/northbymidwest/ra-metal-capture/actions/workflows/ci.yml)
 
-Captures a Metal frame trace (`.gputrace`) from RetroArch. It launches a
-RetroArch.app with a core, ROM, save state and shader preset, sizes the
-window, and records presented frames with Apple's `gpucapture(1)`. RetroArch
-runs Vulkan through MoltenVK, which is what makes the trace Metal. The
-result opens in Xcode's GPU debugger like any other capture.
-
-A static image can be captured instead, through RetroArch's built-in image
-viewer, in place of an emulator core and ROM; see [Image mode](#image-mode).
-
-With `--backend librashader` that same image, or a software-rendered
-libretro core loaded with a ROM and a save state, is rendered through the
-preset inside this process instead, with no RetroArch at all; see
+Captures a Metal frame trace (`.gputrace`) of a shader preset. By default
+it renders inside this process through the librashader crate's Metal
+runtime, taking either a static image or a software-rendered libretro core
+loaded with a ROM and a save state, and writes the trace with Metal's
+capture API; no RetroArch is involved. See
 [librashader backend](#librashader-backend).
+
+With `--backend retroarch` it instead launches a RetroArch.app with a core,
+ROM, save state and shader preset, sizes the window, and records presented
+frames with Apple's `gpucapture(1)`. RetroArch runs Vulkan through MoltenVK,
+which is what makes the trace Metal. A static image can be captured that
+way too, through RetroArch's built-in image viewer; see
+[Image mode](#image-mode). Either way the result opens in Xcode's GPU
+debugger like any other capture.
 
 ## Requirements
 
-- macOS 27 or newer, with Xcode 27 or newer installed. `gpucapture` is
-  needed for the RetroArch backend (the default); the librashader backend
-  needs Xcode for Metal's capture layer and to open the resulting trace.
-  Older versions are untested and unsupported.
-- For the RetroArch backend (the default), a RetroArch.app with its
-  `video_driver` set to `vulkan` (the default on macOS). The tool has been
-  run against the release, nightly, and debug builds. Not needed for
-  `--backend librashader`.
+- macOS 27 or newer, with Xcode 27 or newer installed. The librashader
+  backend needs Xcode for Metal's capture layer and to open the resulting
+  trace; the RetroArch backend needs its `gpucapture`. Older versions are
+  untested and unsupported.
+- For `--backend retroarch` only, a RetroArch.app with its `video_driver`
+  set to `vulkan` (the default on macOS). The tool has been run against the
+  release, nightly, and debug builds.
 - Rust 1.98 or newer to build.
 - The default build compiles librashader and its C++ dependencies (glslang,
   SPIRV-Cross) from source, about 30 s on an M-series Mac for a clean
   build. `cargo install ra-metal-capture --no-default-features` skips them and
-  gives a RetroArch-only tool without `--backend librashader`.
+  gives a RetroArch-only tool, whose default backend is then `retroarch`.
 
 ## Install
 
@@ -47,6 +47,7 @@ From a checkout, `cargo install --path .` builds the same binary.
 
 ```
 ra-metal-capture \
+  --backend retroarch \
   --core sameboy \
   --rom "path/to/game.gb" \
   --state "path/to/game.state" \
@@ -63,6 +64,7 @@ A static image can be captured the same way, without a core or ROM:
 
 ```
 ra-metal-capture \
+  --backend retroarch \
   --image sample.png \
   --shader "$HOME/Library/Application Support/RetroArch/shaders/vectorscale/vectorscale.slangp" \
   --output /tmp/sample-vectorscale.gputrace
@@ -73,22 +75,20 @@ other accepted image format) works in its place. `--image` replaces
 `--core` and `--rom` with a file loaded through RetroArch's built-in image
 viewer; see [Image mode](#image-mode) below.
 
-The same image can be rendered without RetroArch at all, through the
-librashader crate's Metal runtime inside this process:
+Without `--backend`, the same image is rendered through the librashader
+crate's Metal runtime inside this process, with no RetroArch at all:
 
 ```
 ra-metal-capture \
   --image sample.png \
   --shader "$HOME/Library/Application Support/RetroArch/shaders/vectorscale/vectorscale.slangp" \
-  --backend librashader \
   --output /tmp/sample-vectorscale-ls.gputrace
 ```
 
-A libretro core can be hosted the same way, with no RetroArch process:
+A libretro core is hosted the same way, again with no RetroArch process:
 
 ```
 ra-metal-capture \
-  --backend librashader \
   --core sameboy \
   --rom "path/to/game.gbc" \
   --state "path/to/game.state" \
@@ -102,7 +102,7 @@ ra-metal-capture \
 | `--core CORE` | `.dylib` path, or a bare name resolved in `libretro_directory` (`sameboy` finds `sameboy_libretro.dylib`). |
 | `--rom PATH` | content to load |
 | `--image FILE` | static image via RetroArch's image viewer; replaces `--core` and `--rom`; incompatible with `--state`, `--slot`, `--advance` |
-| `--backend NAME` | renderer: `retroarch` (default) or `librashader`; `librashader` requires `--shader` and takes either `--image` or `--core` with `--rom`; ignores `--app`, `--cmd-port`, `--keep-running` |
+| `--backend NAME` | renderer: `librashader` (the default whenever the feature is compiled in) or `retroarch` (the default in a `--no-default-features` build); `librashader` requires `--shader` and takes either `--image` or `--core` with `--rom`; ignores `--app`, `--cmd-port`, `--keep-running` |
 | `--output PATH` | output `.gputrace` path (required) |
 | `--state FILE` | save state to load; copied to a temp states dir as slot 0, or under librashader restored into the hosted core after the ROM loads |
 | `--slot N` | load slot N from your real states dir instead; under librashader the file is found the way RetroArch names it under `savestate_directory` |

@@ -45,7 +45,7 @@ fn parse_settle(s: &str) -> std::result::Result<f64, String> {
     Ok(v)
 }
 
-/// Which renderer image mode uses.
+/// Which renderer a run uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 enum Backend {
     /// RetroArch's built-in image viewer, recorded with gpucapture
@@ -53,6 +53,13 @@ enum Backend {
     /// librashader's Metal runtime in this process, recorded with MTLCaptureManager
     Librashader,
 }
+
+/// The backend a run uses when `--backend` is not given: the in-process
+/// renderer whenever it is compiled in, since it needs no RetroArch.
+#[cfg(feature = "librashader")]
+const DEFAULT_BACKEND: Backend = Backend::Librashader;
+#[cfg(not(feature = "librashader"))]
+const DEFAULT_BACKEND: Backend = Backend::Retroarch;
 
 /// Launch RetroArch with a ROM and save state, or a static image, plus a
 /// shader preset, then capture frames to a .gputrace with gpucapture; or
@@ -87,8 +94,8 @@ struct Cli {
     #[arg(long, conflicts_with_all = ["core", "rom", "state", "slot", "advance"])]
     image: Option<PathBuf>,
 
-    /// Renderer for image mode or core hosting: retroarch (default) or librashader
-    #[arg(long, value_enum, default_value_t = Backend::Retroarch)]
+    /// Renderer: librashader (the default when compiled in) or retroarch
+    #[arg(long, value_enum, default_value_t = DEFAULT_BACKEND)]
     backend: Backend,
 
     /// Save state file to load at launch (staged as slot 0 in a temp dir)
@@ -794,8 +801,16 @@ mod tests {
     }
 
     #[test]
-    fn backend_defaults_to_retroarch() {
-        assert_eq!(parse_rom(&[]).unwrap().backend, Backend::Retroarch);
+    fn backend_defaults_to_librashader_when_compiled_in() {
+        assert_eq!(parse_rom(&[]).unwrap().backend, DEFAULT_BACKEND);
+        #[cfg(feature = "librashader")]
+        assert_eq!(DEFAULT_BACKEND, Backend::Librashader);
+        #[cfg(not(feature = "librashader"))]
+        assert_eq!(DEFAULT_BACKEND, Backend::Retroarch);
+        assert_eq!(
+            parse_rom(&["--backend", "retroarch"]).unwrap().backend,
+            Backend::Retroarch
+        );
         let cli = parse_raw(&[
             "--image",
             "s.png",

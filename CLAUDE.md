@@ -5,10 +5,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A macOS-only Rust CLI that records a Metal frame trace (`.gputrace`) of a
-shader preset. Two backends: launch RetroArch.app and capture its presented
-frames with Apple's `gpucapture(1)` (the default), or render through the
-librashader crate's Metal runtime in this process and write the trace with
-`MTLCaptureManager` (`--backend librashader`). The librashader backend
+shader preset. Two backends: render through the librashader crate's Metal
+runtime in this process and write the trace with `MTLCaptureManager`
+(`--backend librashader`, the default whenever the feature is compiled
+in), or launch RetroArch.app and capture its presented frames with Apple's
+`gpucapture(1)` (`--backend retroarch`, the default only in a
+`--no-default-features` build). The librashader backend
 renders either a static image (`--image FILE`) or a software-rendered
 libretro core hosted in this same process (`--core` and `--rom`, with
 `--state` or `--slot` to restore a RetroArch save state).
@@ -41,11 +43,11 @@ Real run against the fixture (re-execs itself with `MTL_CAPTURE_ENABLED=1`):
 ```
 cargo run -q -- --image sample.png \
   --shader "$HOME/Library/Application Support/RetroArch/shaders/vectorscale/vectorscale.slangp" \
-  --backend librashader --output sample.gputrace -v
+  --output sample.gputrace -v
 ```
 
-The same command without `--backend` launches `/Applications/RetroArch.app`
-and captures through `gpucapture`.
+The same command with `--backend retroarch` launches
+`/Applications/RetroArch.app` and captures through `gpucapture`.
 
 ## Rules that are easy to miss
 

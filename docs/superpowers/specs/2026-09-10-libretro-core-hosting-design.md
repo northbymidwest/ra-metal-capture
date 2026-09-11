@@ -1,5 +1,9 @@
 # libretro core hosting design
 
+> Amended 2026-09-11: `librashader` became the default backend whenever
+> the feature is compiled in; `--backend retroarch` selects the RetroArch
+> capture. Statements below that call `retroarch` the default describe
+> the design as first shipped.
 Extend the librashader backend from static images to live emulator cores.
 `--backend librashader --core CORE --rom ROM [--state FILE | --slot N]`
 loads the libretro core into this process, runs it headless, feeds each
