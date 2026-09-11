@@ -6,9 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A macOS-only Rust CLI that records a Metal frame trace (`.gputrace`) of a
 shader preset. Two backends: launch RetroArch.app and capture its presented
-frames with Apple's `gpucapture(1)` (the default), or render a static image
-through the librashader crate's Metal runtime in this process and write the
-trace with `MTLCaptureManager` (`--image FILE --backend librashader`).
+frames with Apple's `gpucapture(1)` (the default), or render through the
+librashader crate's Metal runtime in this process and write the trace with
+`MTLCaptureManager` (`--backend librashader`). The librashader backend
+renders either a static image (`--image FILE`) or a software-rendered
+libretro core hosted in this same process (`--core` and `--rom`, with
+`--state` or `--slot` to restore a RetroArch save state).
 Requires macOS 27 and Xcode 27 at run time. Published on crates.io as
 `ra-metal-capture`.
 
@@ -92,16 +95,18 @@ presents on a frame advance. The measured constants and their reasons are
 in the doc comments on `capture.rs` and in the spec.
 
 `libretro/mod.rs` hosts a core in this process: `Core::load` dlopens the
-`.dylib` through `libloading`, calls `retro_init`, loads the ROM, and hands
-back `AvInfo`; `Core::restore` feeds a decoded state to `retro_unserialize`
-and `Core::run_frame` runs one `retro_run` and returns the `Frame` the core
-delivered. libretro's callbacks carry no user pointer, so everything they
-need lives in a process-wide static in `libretro/env.rs`, and `Core::load`
-therefore refuses a second core in the same process; `Drop` unloads the
-game, deinitializes, and releases that slot. `Context` carries the config
-the `environment` callback answers from (system and save directories, core
-options read from RetroArch's per-core `.opt` file). A `Core` is a
-`render::FrameSource`, which is how emulated frames reach the render loop.
+`.dylib` through `libloading`, resolves every `retro_*` symbol, installs the
+callbacks, and calls `retro_init`; `Core::load_game` loads the ROM and
+returns `AvInfo`; `Core::restore` feeds a decoded state to
+`retro_unserialize`; and `Core::run_frame` runs one `retro_run` and returns
+the `Frame` the core delivered. libretro's callbacks carry no user pointer,
+so everything they need lives in a process-wide static in `libretro/env.rs`,
+and `Core::load` therefore refuses a second core in the same process;
+`Drop` unloads the game, deinitializes, and releases that slot. `Context`
+carries the config the `environment` callback answers from (system and save
+directories, core options read from RetroArch's per-core `.opt` file). A
+`Core` is a `render::FrameSource`, which is how emulated frames reach the
+render loop.
 
 `render/mod.rs` builds BGRA8 textures, loads the preset with
 `librashader::runtime::mtl::FilterChain`, and runs a two-phase loop over a

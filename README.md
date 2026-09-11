@@ -14,6 +14,11 @@ result opens in Xcode's GPU debugger like any other capture.
 A static image can be captured instead, through RetroArch's built-in image
 viewer, in place of an emulator core and ROM; see [Image mode](#image-mode).
 
+With `--backend librashader` that same image, or a software-rendered
+libretro core loaded with a ROM and a save state, is rendered through the
+preset inside this process instead, with no RetroArch at all; see
+[librashader backend](#librashader-backend).
+
 ## Requirements
 
 - macOS 27 or newer, with Xcode 27 or newer installed. `gpucapture` is
@@ -167,7 +172,7 @@ Because the image viewer never advances a frame counter, shader passes
 that depend on frame count or a history of prior frames see a permanently
 frozen image rather than the animation they would see under a running core.
 
-### Backends
+## librashader backend
 
 `--backend librashader` renders the image through the same preset with the
 [librashader](https://github.com/SnowflakePowered/librashader) crate's Metal
@@ -196,12 +201,18 @@ no window, no input (every button reads as released, which is what makes
 the run repeatable), no audio. `--state` restores a RetroArch save state
 (RetroArch's compressed and container formats are both read); `--slot N`
 finds it the way RetroArch names it under `savestate_directory`. The
-core's options come from RetroArch's per-core options file, so it renders
-the same frame RetroArch would. `--advance N` then runs N frames, the last
-of which is recorded, matching the RetroArch backend; without a state,
-`--settle` seconds of frames run first. Every frame before the recorded
-one still passes through the preset, so history-dependent passes see real
-prior frames, and `--frames N` records N consecutive emulated frames.
+core's options come from RetroArch's per-core options file, so the core
+renders with the same settings RetroArch would use. `--advance N` then
+runs N frames, the last of which is recorded, matching the RetroArch
+backend; without a state, `--settle` seconds of frames run first. Every
+frame before the recorded one still passes through the preset, so
+history-dependent passes see real prior frames, and `--frames N` records N
+consecutive emulated frames.
+
+Warm-up frames leave the preset's history and feedback textures holding
+real data, which the trace records, so a run with many warm-up frames
+(`--advance 30`, or the default settle) writes a bundle roughly three
+times the size of one with none.
 
 Only software-rendered cores are supported; a core that asks for an
 OpenGL or Vulkan context is refused. Zipped ROMs must be extracted first.

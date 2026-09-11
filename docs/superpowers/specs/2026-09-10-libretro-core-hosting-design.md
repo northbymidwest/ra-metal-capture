@@ -331,9 +331,9 @@ Success is a bundle whose recorded frame shows the same scene as the
 state's `.state.png` thumbnail and whose second command buffer differs
 from the first.
 
-**Verified 2026-09-11.** All four runs passed on an M-series Mac with the
-SameBoy core and Link's Awakening DX. The command above loaded the core
-(`SameBoy (160x144 at 59.728 fps)`), reported `source 160x144 -> output
+**Verified 2026-09-11.** All four runs passed with the SameBoy core and
+Link's Awakening DX. The command above loaded the core (`SameBoy (160x144
+at 59.728 fps)`), reported `source 160x144 -> output
 3071x2764 px, 0 warm-up + 2 recorded frame(s)`, exited 0, and wrote a 35 MB
 bundle with an `index` entry in 1.2 s warm (4.0 s on the first, cold run).
 `gpudebug` reports exactly two command buffers of 14 encoders each.
