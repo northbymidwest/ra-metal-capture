@@ -148,7 +148,7 @@ fn wait_capturable(guard: &mut ChildGuard, timeout: Duration, log_path: &Path) -
 
 /// True when `path` looks like a bundle this tool (or Xcode) wrote: a
 /// directory whose name ends in `.gputrace` and which contains an `index`.
-fn is_gputrace_bundle(path: &Path) -> bool {
+pub fn is_gputrace_bundle(path: &Path) -> bool {
     path.extension().is_some_and(|e| e == "gputrace")
         && path.is_dir()
         && path.join("index").exists()
@@ -157,7 +157,7 @@ fn is_gputrace_bundle(path: &Path) -> bool {
 /// Make room for a new capture at `output`. A previous bundle is removed;
 /// anything else that exists there is refused, so a mistyped path never
 /// deletes user data.
-fn prepare_output(output: &Path) -> Result<()> {
+pub fn prepare_output(output: &Path) -> Result<()> {
     if !output.exists() {
         return Ok(());
     }
