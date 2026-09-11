@@ -273,3 +273,200 @@ pub unsafe extern "C" fn input_state(
 ) -> i16 {
     0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use libretro_sys::{
+        ENVIRONMENT_GET_CAN_DUPE, ENVIRONMENT_GET_VARIABLE, ENVIRONMENT_SET_HW_RENDER,
+        ENVIRONMENT_SET_PIXEL_FORMAT, ENVIRONMENT_SET_VARIABLES,
+    };
+    use std::ffi::CString;
+    use std::sync::{Mutex, MutexGuard};
+
+    /// The callbacks read one process-wide state, so tests take this lock
+    /// and reset that state before touching it.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    fn fresh() -> MutexGuard<'static, ()> {
+        let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        *shared() = Shared::default();
+        guard
+    }
+
+    fn env(cmd: c_uint, data: *mut c_void) -> bool {
+        // SAFETY: every caller below passes the pointer type libretro.h
+        // documents for `cmd`, backed by a live local.
+        unsafe { environment(cmd, data) }
+    }
+
+    #[test]
+    fn can_dupe_is_answered_true_through_the_out_pointer() {
+        let _g = fresh();
+        let mut flag = false;
+        assert!(env(
+            ENVIRONMENT_GET_CAN_DUPE,
+            &mut flag as *mut bool as *mut c_void
+        ));
+        assert!(flag);
+    }
+
+    #[test]
+    fn experimental_bit_is_ignored_but_private_bit_refuses() {
+        let _g = fresh();
+        let mut flag = false;
+        assert!(env(
+            ENVIRONMENT_GET_CAN_DUPE | ENVIRONMENT_EXPERIMENTAL,
+            &mut flag as *mut bool as *mut c_void
+        ));
+        assert!(flag);
+        let mut untouched = false;
+        assert!(!env(
+            ENVIRONMENT_GET_CAN_DUPE | ENVIRONMENT_PRIVATE,
+            &mut untouched as *mut bool as *mut c_void
+        ));
+        assert!(!untouched, "a private command must not write through data");
+    }
+
+    #[test]
+    fn option_declarations_are_acknowledged_even_with_null_data() {
+        let _g = fresh();
+        for cmd in [
+            ENVIRONMENT_SET_VARIABLES,
+            ENVIRONMENT_SET_CORE_OPTIONS,
+            ENVIRONMENT_SET_CORE_OPTIONS_INTL,
+            ENVIRONMENT_SET_CORE_OPTIONS_V2,
+            ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL,
+        ] {
+            assert!(env(cmd, std::ptr::null_mut()), "cmd {cmd}");
+        }
+    }
+
+    #[test]
+    fn unknown_commands_and_null_data_are_refused_except_the_variable_probe() {
+        let _g = fresh();
+        let mut flag = false;
+        assert!(!env(9999, &mut flag as *mut bool as *mut c_void));
+        assert!(!env(ENVIRONMENT_GET_CAN_DUPE, std::ptr::null_mut()));
+        assert!(env(ENVIRONMENT_GET_VARIABLE, std::ptr::null_mut()));
+    }
+
+    #[test]
+    fn get_variable_answers_true_and_signals_unknown_keys_with_a_null_value() {
+        let _g = fresh();
+        shared()
+            .options
+            .insert("sameboy_model".into(), CString::new("Auto").unwrap());
+        let key = CString::new("sameboy_model").unwrap();
+        let mut var = Variable {
+            key: key.as_ptr(),
+            value: std::ptr::null(),
+        };
+        assert!(env(
+            ENVIRONMENT_GET_VARIABLE,
+            &mut var as *mut Variable as *mut c_void
+        ));
+        // SAFETY: the callback set `value` to a CString it owns in `shared()`.
+        assert_eq!(
+            unsafe { CStr::from_ptr(var.value) }.to_str().unwrap(),
+            "Auto"
+        );
+
+        let unknown = CString::new("nope").unwrap();
+        let mut var = Variable {
+            key: unknown.as_ptr(),
+            value: key.as_ptr(),
+        };
+        assert!(env(
+            ENVIRONMENT_GET_VARIABLE,
+            &mut var as *mut Variable as *mut c_void
+        ));
+        assert!(var.value.is_null());
+
+        let mut var = Variable {
+            key: std::ptr::null(),
+            value: key.as_ptr(),
+        };
+        assert!(env(
+            ENVIRONMENT_GET_VARIABLE,
+            &mut var as *mut Variable as *mut c_void
+        ));
+        assert!(var.value.is_null());
+    }
+
+    #[test]
+    fn pixel_format_maps_the_three_known_values_and_refuses_others() {
+        let _g = fresh();
+        for (raw, want) in [
+            (0u32, PixelFormat::ARGB1555),
+            (1, PixelFormat::ARGB8888),
+            (2, PixelFormat::RGB565),
+        ] {
+            let mut v = raw;
+            assert!(env(
+                ENVIRONMENT_SET_PIXEL_FORMAT,
+                &mut v as *mut c_uint as *mut c_void
+            ));
+            assert_eq!(shared().pixel_format, want);
+        }
+        let mut v = 7u32;
+        assert!(!env(
+            ENVIRONMENT_SET_PIXEL_FORMAT,
+            &mut v as *mut c_uint as *mut c_void
+        ));
+        assert_eq!(shared().pixel_format, PixelFormat::RGB565, "unchanged");
+    }
+
+    #[test]
+    fn hw_render_is_refused_and_remembered() {
+        let _g = fresh();
+        let mut anything = 0u32;
+        assert!(!env(
+            ENVIRONMENT_SET_HW_RENDER,
+            &mut anything as *mut c_uint as *mut c_void
+        ));
+        assert!(shared().asked_for_hw_render);
+    }
+
+    #[test]
+    fn video_refresh_copies_a_frame_sized_to_what_the_core_owns() {
+        let _g = fresh();
+        shared().pixel_format = PixelFormat::ARGB8888;
+        // 2x2 XRGB8888 with a pitch of 12: the last row carries no padding.
+        let buf: [u8; 20] = [
+            1, 2, 3, 0, 4, 5, 6, 0, 9, 9, 9, 9, // row 0 plus padding
+            7, 8, 9, 0, 10, 11, 12, 0, // row 1, exactly width * 4
+        ];
+        // SAFETY: `buf` is 20 bytes, which is (2 - 1) * 12 + 2 * 4.
+        unsafe { video_refresh(buf.as_ptr() as *const c_void, 2, 2, 12) };
+        let frame = shared().frame.clone().expect("a frame");
+        assert_eq!(
+            frame.size,
+            Size {
+                width: 2,
+                height: 2
+            }
+        );
+        assert_eq!(
+            frame.bgra,
+            [1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255, 10, 11, 12, 255]
+        );
+    }
+
+    #[test]
+    fn video_refresh_keeps_the_previous_frame_on_a_dupe_and_drops_bad_geometry() {
+        let _g = fresh();
+        shared().pixel_format = PixelFormat::ARGB8888;
+        let buf = [0u8; 4];
+        // SAFETY: one 1x1 XRGB8888 pixel, pitch 4.
+        unsafe { video_refresh(buf.as_ptr() as *const c_void, 1, 1, 4) };
+        assert!(shared().frame.is_some());
+        // SAFETY: a null pointer is libretro's dupe signal; nothing is read.
+        unsafe { video_refresh(std::ptr::null(), 1, 1, 4) };
+        assert!(shared().frame.is_some(), "dupe keeps the previous frame");
+        // A row wider than the pitch is refused before any read.
+        // SAFETY: the guard rejects the geometry before touching the buffer.
+        unsafe { video_refresh(buf.as_ptr() as *const c_void, 4, 1, 4) };
+        assert!(shared().frame.is_none());
+    }
+}

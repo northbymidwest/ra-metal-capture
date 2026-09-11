@@ -12,7 +12,11 @@ Notable changes per release. Dates are the publish date.
   preset with no RetroArch process. `--frames N` records N consecutive
   emulated frames; `--advance` and `--settle` keep their meanings.
 - `libretro` module (feature `librashader`): `Core`, `Context`, `AvInfo`,
-  `Frame`, `pixels::to_bgra`.
+  `Frame`.
+- `layout` module (feature `librashader`): `RetroArchDirs`, `DirResolver`,
+  `Located`, `describe_tried`, `settle_frames`, the macOS-layout resolution
+  the binary uses, now reachable from the library.
+- `config::Size` implements `FromStr` (`WxH`); `config::is_config_safe`.
 - `render::FrameSource` and `render::ImageSource` (`from_image` for an image
   already in memory, `open` for a file).
 - `--core-options FILE`: a RetroArch-format options file for a hosted

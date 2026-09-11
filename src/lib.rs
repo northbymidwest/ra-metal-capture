@@ -32,6 +32,8 @@ pub mod display;
 pub mod image;
 pub mod launch;
 #[cfg(feature = "librashader")]
+pub mod layout;
+#[cfg(feature = "librashader")]
 pub mod libretro;
 pub mod remote;
 #[cfg(feature = "librashader")]

@@ -8,7 +8,7 @@
 #![allow(unsafe_code)]
 
 mod env;
-pub mod pixels;
+pub(crate) mod pixels;
 
 pub use env::Frame;
 

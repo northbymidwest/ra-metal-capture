@@ -2,7 +2,7 @@
 //! appendconfig that overrides it for one launch.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Expand a leading `~` or `~/` using `$HOME`. Other paths are returned unchanged.
 pub fn expand_tilde(s: &str) -> PathBuf {
@@ -49,6 +49,31 @@ pub fn read_keys(text: &str, keys: &[&str]) -> HashMap<String, String> {
 pub struct Size {
     pub width: u32,
     pub height: u32,
+}
+
+impl std::str::FromStr for Size {
+    type Err = String;
+
+    /// `WxH`, both non-zero, as on the command line.
+    fn from_str(s: &str) -> Result<Size, String> {
+        let (w, h) = s
+            .split_once('x')
+            .ok_or_else(|| format!("expected WxH, got {s:?}"))?;
+        let width: u32 = w.parse().map_err(|_| format!("bad width in {s:?}"))?;
+        let height: u32 = h.parse().map_err(|_| format!("bad height in {s:?}"))?;
+        if width == 0 || height == 0 {
+            return Err("width and height must be non-zero".into());
+        }
+        Ok(Size { width, height })
+    }
+}
+
+/// Whether `path` can be written into a `retroarch.cfg` value unchanged:
+/// the format quotes values with `"` and has no escape for one, and a
+/// newline would start a new key.
+pub fn is_config_safe(path: &Path) -> bool {
+    let s = path.to_string_lossy();
+    !s.contains('"') && !s.contains('\n') && !s.contains('\r')
 }
 
 /// How the RetroArch window is sized for the run.
@@ -145,6 +170,27 @@ impl AppendConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn size_parses_wxh_and_rejects_zero_and_malformed() {
+        assert_eq!(
+            "1600x1440".parse::<Size>().unwrap(),
+            Size {
+                width: 1600,
+                height: 1440
+            }
+        );
+        assert!("1600".parse::<Size>().is_err());
+        assert!("0x10".parse::<Size>().is_err());
+        assert!("ax10".parse::<Size>().is_err());
+    }
+
+    #[test]
+    fn config_safe_rejects_quotes_and_newlines() {
+        assert!(is_config_safe(Path::new("/tmp/ra-metal-capture-abc")));
+        assert!(!is_config_safe(Path::new("/tmp/a\"b")));
+        assert!(!is_config_safe(Path::new("/tmp/a\nb")));
+    }
 
     #[test]
     fn reads_quoted_values() {
