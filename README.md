@@ -103,7 +103,7 @@ ra-metal-capture \
 | flag | meaning |
 |---|---|
 | `--app PATH` | `.app` bundle or its binary. Default `/Applications/RetroArch.app`. RetroArch backend only; rejected under librashader. |
-| `--core CORE` | `.dylib` path, or a bare name resolved in `libretro_directory` (`sameboy` finds `sameboy_libretro.dylib`). |
+| `--core CORE` | `.dylib` path, or a bare name (`sameboy` finds `sameboy_libretro.dylib`) looked up in RetroArch's default cores directory, then in the `libretro_directory` your `retroarch.cfg` names if it is not there |
 | `--rom PATH` | content to load |
 | `--image FILE` | static image via RetroArch's image viewer; replaces `--core` and `--rom`; incompatible with `--state`, `--slot`, `--advance` |
 | `--backend NAME` | renderer: `librashader` (the default whenever the feature is compiled in) or `retroarch` (the default in a `--no-default-features` build); `librashader` requires `--shader` and takes either `--image` or `--core` with `--rom`; rejects `--app`, `--cmd-port`, `--keep-running`, which only the RetroArch backend honours |
@@ -113,7 +113,7 @@ ra-metal-capture \
 | `--core-options FILE` | RetroArch-format `key = "value"` options for a hosted core; without it the core uses its built-in defaults; requires `--core`; librashader only |
 | `--skip-extension-check` | load a ROM whose extension the core does not declare; by default a mismatch is an error naming what the core accepts; librashader only |
 | `--shader PRESET` | `.slangp` / `.glslp` passed via `--set-shader` |
-| `--config PATH` | `retroarch.cfg` to base the run on; default `~/Library/Application Support/RetroArch/config/retroarch.cfg` |
+| `--config PATH` | the `retroarch.cfg` consulted only when a bare core name, `--slot`, or the system directory is not at RetroArch's default location; default `~/Library/Application Support/RetroArch/config/retroarch.cfg`, and it need not exist |
 | `--size WxH` | exact window size in points (RetroArch) or output size in pixels (librashader) |
 | `--scale N` | integer scale of the core's native resolution, in window points (RetroArch) or output pixels (librashader) |
 | `--fullscreen` | launch with `-f` (RetroArch) or render at the main display's full pixel size (librashader) |
