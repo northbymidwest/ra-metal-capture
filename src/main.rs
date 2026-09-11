@@ -107,7 +107,11 @@ struct Cli {
     size: Option<Size>,
 
     /// Integer scale of the core's native resolution
-    #[arg(long, conflicts_with_all = ["size", "fullscreen"])]
+    #[arg(
+        long,
+        conflicts_with_all = ["size", "fullscreen"],
+        value_parser = clap::value_parser!(u32).range(1..)
+    )]
     scale: Option<u32>,
 
     /// Launch fullscreen (-f)
@@ -445,6 +449,12 @@ mod tests {
             parse_rom(&["--fullscreen"]).unwrap().window_mode(),
             WindowMode::Fullscreen
         );
+    }
+
+    #[test]
+    fn scale_rejects_zero() {
+        assert!(parse_rom(&["--scale", "0"]).is_err());
+        assert_eq!(parse_rom(&["--scale", "1"]).unwrap().scale, Some(1));
     }
 
     #[test]

@@ -4,12 +4,19 @@
 //! [`Trace`], and is exercised only by a real run. This is the one module
 //! in the crate that allows `unsafe`, for the Metal calls objc2 cannot
 //! prove safe (descriptor construction and the byte upload).
+//!
+//! Under `MTL_CAPTURE_ENABLED=1` the device Metal hands back is a capture
+//! proxy class that does not statically declare every `MTLDevice` selector.
+//! objc2's debug-build method verification looks each selector up and
+//! panics on one it cannot find, so any new call against `device` in this
+//! module needs a real debug-build run to confirm it is actually there,
+//! not just a clean `cargo build`.
 #![allow(unsafe_code)]
 
 mod trace;
 pub use trace::{CAPTURE_ENV, Trace};
 
-use crate::capture::{is_gputrace_bundle, prepare_output};
+use crate::capture::prepare_output;
 use crate::config::{Size, WindowMode};
 use crate::display::Screen;
 use anyhow::{Context, Result, anyhow, bail};
@@ -63,11 +70,9 @@ fn decode_bgra(path: &Path) -> Result<(Size, Vec<u8>)> {
 /// managed storage, and managed memory otherwise.
 ///
 /// The family is asked rather than `hasUnifiedMemory`, which would be the
-/// direct question: under `MTL_CAPTURE_ENABLED=1` the device is a
-/// `CaptureMTLDevice` that forwards `hasUnifiedMemory` instead of
-/// implementing it, and objc2's debug-build message-send check looks the
-/// selector up with `class_getInstanceMethod` and panics when it is missing.
-/// `supportsFamily:` is a real method on that class.
+/// direct question: `supportsFamily:` is real on the capture proxy device
+/// class where `hasUnifiedMemory` is not. See the module doc for why that
+/// distinction matters under capture.
 fn new_texture(
     device: &ProtocolObject<dyn MTLDevice>,
     size: Size,
@@ -104,6 +109,13 @@ pub fn run(opts: &RenderOptions) -> Result<()> {
     prepare_output(&opts.output)?;
     let (image_size, bytes) = decode_bgra(&opts.image)?;
     let size = output_size(&opts.window, image_size, &opts.screen);
+    if size.width == 0 || size.height == 0 {
+        bail!(
+            "the output size is {}x{}; refusing to create a zero-sized texture",
+            size.width,
+            size.height
+        );
+    }
     if opts.verbose {
         eprintln!(
             "image {}x{} -> output {}x{} px, {} frame(s)",
@@ -163,7 +175,7 @@ pub fn run(opts: &RenderOptions) -> Result<()> {
     }
     trace.finish();
 
-    if !is_gputrace_bundle(&opts.output) {
+    if !opts.output.join("index").exists() {
         bail!(
             "the Metal capture finished but {} has no `index` entry; the bundle looks incomplete",
             opts.output.display()
@@ -211,8 +223,8 @@ pub fn output_size(mode: &WindowMode, image: Size, screen: &Screen) -> Size {
     match mode {
         WindowMode::Exact(size) => *size,
         WindowMode::Scale(n) => Size {
-            width: image.width * n,
-            height: image.height * n,
+            width: image.width.saturating_mul(*n),
+            height: image.height.saturating_mul(*n),
         },
         WindowMode::Fullscreen => to_pixels(screen.full, screen.backing_scale),
         WindowMode::Fill { max } => fit(image, to_pixels(*max, screen.backing_scale)),

@@ -13,10 +13,11 @@ use std::path::Path;
 /// before the process touches Metal; `main` re-execs to make it so.
 pub const CAPTURE_ENV: &str = "MTL_CAPTURE_ENABLED";
 
-/// An in-progress capture. Every command buffer committed on the device
-/// between [`Trace::start`] and [`Trace::finish`] lands in the bundle.
-/// Dropping an unfinished `Trace` stops the capture, so a failure
+/// An in-progress capture. Every command buffer created on the device after
+/// [`Trace::start`] and committed before [`Trace::finish`] lands in the
+/// bundle. Dropping an unfinished `Trace` stops the capture, so a failure
 /// mid-frame never leaves the process capturing while it unwinds.
+#[must_use = "dropping a Trace stops the capture"]
 pub struct Trace {
     manager: Retained<MTLCaptureManager>,
     capturing: bool,
@@ -26,9 +27,9 @@ impl Trace {
     /// Start writing a GPU trace document at `output` for every command
     /// buffer on `device`.
     pub fn start(device: &ProtocolObject<dyn MTLDevice>, output: &Path) -> Result<Trace> {
-        // SAFETY: the shared manager is a process-wide singleton. objc2
-        // marks the accessor unsafe because it cannot prove thread safety;
-        // this tool uses it from one thread only.
+        // SAFETY: the generated binding for this accessor documents no
+        // invariant (there is no `# Safety` section); this crate calls it
+        // from one thread only.
         let manager = unsafe { MTLCaptureManager::sharedCaptureManager() };
         if !manager.supportsDestination(MTLCaptureDestination::GPUTraceDocument) {
             bail!(

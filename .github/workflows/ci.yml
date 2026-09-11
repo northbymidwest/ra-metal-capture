@@ -126,6 +126,10 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps
+      - name: docs (no default features)
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --no-default-features
 
   msrv:
     # Verifies the declared MSRV floor still builds. Compiles on macos-latest,
