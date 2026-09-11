@@ -74,10 +74,11 @@ pub enum Located {
 /// with the default layout and never needs a config file.
 pub struct DirResolver<'a> {
     defaults: RetroArchDirs,
-    /// Reads the config text, or `None` when there is no config file.
-    load_config: Box<dyn FnOnce() -> Option<String> + 'a>,
-    /// `None` until first needed; then the parsed config, or `None` if absent.
-    config: Option<Option<RetroArchDirs>>,
+    /// Reads the config text (or `None` when there is no file); taken on
+    /// first use, so it runs at most once.
+    load_config: Option<Box<dyn FnOnce() -> Option<String> + 'a>>,
+    /// The parsed config once `load_config` has run and found a file.
+    config: Option<RetroArchDirs>,
     verbose: bool,
 }
 
@@ -89,7 +90,7 @@ impl<'a> DirResolver<'a> {
     ) -> DirResolver<'a> {
         DirResolver {
             defaults,
-            load_config: Box::new(load_config),
+            load_config: Some(Box::new(load_config)),
             config: None,
             verbose,
         }
@@ -119,11 +120,10 @@ impl<'a> DirResolver<'a> {
             return Located::Found(candidate);
         }
         let mut tried = vec![candidate];
-        if self.config.is_none() {
-            let loader = std::mem::replace(&mut self.load_config, Box::new(|| None));
-            self.config = Some(loader().map(|text| RetroArchDirs::from_config(&text)));
+        if let Some(load) = self.load_config.take() {
+            self.config = load().map(|text| RetroArchDirs::from_config(&text));
         }
-        if let Some(Some(cfg)) = &self.config {
+        if let Some(cfg) = &self.config {
             let candidate = pick(cfg);
             if candidate != tried[0] && exists(&candidate) {
                 if self.verbose {
