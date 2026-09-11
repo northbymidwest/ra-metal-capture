@@ -101,7 +101,9 @@ jobs:
 
   macos:
     # Everything that COMPILES the crate: build, clippy, the test suite, and
-    # rustdoc. Blocking: none of it needs RetroArch, Xcode, or a GPU.
+    # rustdoc. Both feature shapes are built: default (librashader backend,
+    # compiles glslang and SPIRV-Cross from C++) and `--no-default-features`.
+    # Blocking: none of it needs RetroArch, Xcode, or a GPU.
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
@@ -115,6 +117,11 @@ jobs:
       - run: cargo build
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+      # The RetroArch-only shape must keep building and testing without the
+      # librashader feature (and its C++ dependencies).
+      - run: cargo build --no-default-features
+      - run: cargo clippy --no-default-features --all-targets -- -D warnings
+      - run: cargo test --no-default-features
       - name: docs
         env:
           RUSTDOCFLAGS: -D warnings

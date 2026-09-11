@@ -27,6 +27,16 @@ exclude = [
 [package.metadata.docs.rs]
 default-target = "aarch64-apple-darwin"
 targets = ["aarch64-apple-darwin"]
+# docs.rs builds on Linux with the Apple target above, and `cargo doc` runs
+# dependency build scripts, so the librashader feature's C++ (glslang,
+# SPIRV-Cross) cannot build there. Document the RetroArch-only shape.
+no-default-features = true
+
+[features]
+default = ["librashader"]
+# The in-process image backend: librashader's Metal runtime plus Metal's
+# capture API. Without it the tool is RetroArch-only and builds no C++.
+librashader = ["dep:librashader", "dep:objc2", "dep:objc2-metal", "dep:image"]
 
 [lib]
 name = "ra_metal_capture"
@@ -41,5 +51,19 @@ anyhow = "1.0.104"
 clap = { version = "4.6.6", features = ["derive"] }
 tempfile = "3.27.0"
 nix = { version = "0.31.3", features = ["signal"] }
-objc2-foundation = { version = "0.3.2", features = ["NSGeometry"] }
+objc2-foundation = { version = "0.3.2", features = ["NSGeometry", "NSString", "NSURL", "NSError"] }
 objc2-app-kit = { version = "0.3.2", features = ["NSScreen"] }
+# librashader backend (feature "librashader")
+librashader = { version = "0.12.0", optional = true, default-features = false, features = ["runtime-metal", "presets", "preprocess"] }
+objc2 = { version = "0.6.4", optional = true }
+objc2-metal = { version = "0.3.2", optional = true, features = [
+    "MTLCaptureManager",
+    "MTLCommandBuffer",
+    "MTLCommandQueue",
+    "MTLDevice",
+    "MTLPixelFormat",
+    "MTLResource",
+    "MTLTexture",
+    "MTLTypes",
+] }
+image = { version = "0.25.8", optional = true, default-features = false, features = ["png", "jpeg", "bmp", "gif", "tga", "pnm", "hdr"] }

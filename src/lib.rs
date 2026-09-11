@@ -10,6 +10,10 @@
 //!
 //! Requires macOS 27 and Xcode 27 at run time; nothing here touches
 //! RetroArch or `gpucapture` until [`capture::run`] is called.
+//!
+//! With the `librashader` feature (on by default), image mode can instead
+//! render in-process through [`render::run`], which writes the trace with
+//! Metal's capture API and never launches RetroArch.
 #![deny(unsafe_code)]
 
 pub mod app;
@@ -20,4 +24,6 @@ pub mod display;
 pub mod image;
 pub mod launch;
 pub mod remote;
+#[cfg(feature = "librashader")]
+pub mod render;
 pub mod state;

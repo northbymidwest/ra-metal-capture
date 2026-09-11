@@ -9,17 +9,27 @@ all-features = false
 # The union of every SPDX license in the resolved tree (surveyed from
 # `cargo metadata`). `unused-allowed-license = "deny"` keeps this list honest:
 # it fails if an entry here stops being needed.
+#
+# MPL-2.0 is librashader (and persy, smartstring in its tree). MPL is
+# file-scoped copyleft: linking it does not touch this crate's 0BSD terms,
+# and its source is on crates.io. BSD-3-Clause is encoding_rs, which is
+# "(Apache-2.0 OR MIT) AND BSD-3-Clause".
 allow = [
     "0BSD",
     "MIT",
     "Apache-2.0",
     "Unicode-3.0",
     "Zlib",
+    "MPL-2.0",
+    "BSD-3-Clause",
 ]
 unused-allowed-license = "deny"
 
 [bans]
-multiple-versions = "deny"
+# librashader's tree carries around ten duplicate crate versions (syn,
+# thiserror, hashbrown, ...) that this crate cannot resolve; a skip list
+# would go stale on every librashader release. Warn, do not fail.
+multiple-versions = "warn"
 wildcards = "deny"
 
 [sources]
