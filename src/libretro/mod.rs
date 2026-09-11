@@ -113,6 +113,15 @@ fn cstring(path: &Path) -> Result<CString> {
         .with_context(|| format!("{} contains a NUL byte", path.display()))
 }
 
+/// Convert a core options map to the `CString` values the callbacks read,
+/// dropping any value that contains a NUL byte.
+fn options_to_cstring(options: HashMap<String, String>) -> HashMap<String, CString> {
+    options
+        .into_iter()
+        .filter_map(|(k, v)| CString::new(v).ok().map(|v| (k, v)))
+        .collect()
+}
+
 impl Core {
     /// dlopen `dylib`, resolve its API, install the callbacks, and call
     /// `retro_init`. Only one `Core` may exist per process.
@@ -121,11 +130,7 @@ impl Core {
         // so a bad path cannot leave the claim set.
         let system_dir = cstring(&ctx.system_dir)?;
         let save_dir = cstring(&ctx.save_dir)?;
-        let options = ctx
-            .options
-            .into_iter()
-            .filter_map(|(k, v)| CString::new(v).ok().map(|v| (k, v)))
-            .collect();
+        let options = options_to_cstring(ctx.options);
         {
             let mut s = env::shared();
             if s.claimed {
@@ -148,6 +153,13 @@ impl Core {
         // wrong message. `retro_init` is the last step, so there is never
         // an initialised core to deinitialise here.
         Core::open(dylib).inspect_err(|_| env::shared().claimed = false)
+    }
+
+    /// Replace the core options a `GET_VARIABLE` call answers with. Call
+    /// this after `system_info` (which names the options file to read) and
+    /// before `load_game` (which is when a core typically reads them).
+    pub fn set_options(&mut self, options: HashMap<String, String>) {
+        env::shared().options = options_to_cstring(options);
     }
 
     /// The part of `load` that runs with the claim held.
@@ -299,6 +311,12 @@ impl Core {
         Ok(())
     }
 
+    /// The base geometry from `load_game`'s `AvInfo`, zero before a game is
+    /// loaded.
+    pub fn size(&self) -> Size {
+        self.base
+    }
+
     /// Run one emulated frame and return what the core drew. On a dupe the
     /// previous frame is returned again. It is an error before any frame has
     /// arrived, and also on a dupe that follows a frame `video_refresh`
@@ -337,7 +355,7 @@ impl Drop for Core {
 
 impl crate::render::FrameSource for Core {
     fn size(&self) -> Size {
-        self.base
+        self.size()
     }
     fn next(&mut self) -> Result<Vec<u8>> {
         let frame = self.run_frame()?;

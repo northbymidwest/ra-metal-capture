@@ -6,8 +6,12 @@ use ra_metal_capture::config::{self, AppendConfig, PausedConfig, Size, WindowMod
 use ra_metal_capture::image::{EXTENSIONS, is_image_path};
 use ra_metal_capture::launch::{LaunchPlan, build_command};
 #[cfg(feature = "librashader")]
+use ra_metal_capture::libretro;
+#[cfg(feature = "librashader")]
 use ra_metal_capture::render;
 use ra_metal_capture::{app, capture, core, display, remote, state};
+#[cfg(feature = "librashader")]
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -52,7 +56,8 @@ enum Backend {
 
 /// Launch RetroArch with a ROM and save state, or a static image, plus a
 /// shader preset, then capture frames to a .gputrace with gpucapture; or
-/// render a static image through librashader in-process.
+/// render a static image or a hosted libretro core through librashader
+/// in-process.
 #[derive(Parser, Debug)]
 #[command(version)]
 struct Cli {
@@ -82,8 +87,8 @@ struct Cli {
     #[arg(long, conflicts_with_all = ["core", "rom", "state", "slot", "advance"])]
     image: Option<PathBuf>,
 
-    /// Renderer for --image: retroarch (default) or librashader
-    #[arg(long, value_enum, default_value_t = Backend::Retroarch, requires = "image", conflicts_with_all = ["core", "rom", "state", "slot", "advance"])]
+    /// Renderer for image mode or core hosting: retroarch (default) or librashader
+    #[arg(long, value_enum, default_value_t = Backend::Retroarch)]
     backend: Backend,
 
     /// Save state file to load at launch (staged as slot 0 in a temp dir)
@@ -229,8 +234,6 @@ fn run_librashader(_cli: &Cli) -> Result<()> {
 
 #[cfg(feature = "librashader")]
 fn run_librashader(cli: &Cli) -> Result<()> {
-    let image = cli.image.as_deref().context("--backend requires --image")?;
-    validate_image(image)?;
     let preset = cli.shader.clone().context(
         "--backend librashader requires --shader: there is nothing to render without a preset",
     )?;
@@ -239,12 +242,85 @@ fn run_librashader(cli: &Cli) -> Result<()> {
     }
     let output = std::path::absolute(&cli.output)
         .with_context(|| format!("resolving {}", cli.output.display()))?;
+    let window = cli.window_mode();
+    let screen = display::main_screen();
+
+    let (source, warmup): (Box<dyn render::FrameSource>, u32) = if let Some(image) = &cli.image {
+        validate_image(image)?;
+        (Box::new(render::ImageSource::open(image)?), 0)
+    } else {
+        let rom = cli.rom.clone().context("--rom is required with --core")?;
+        if rom
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
+        {
+            bail!(
+                "{} is a zip; this backend takes the extracted ROM (RetroArch extracts archives itself)",
+                rom.display()
+            );
+        }
+        if !rom.is_file() {
+            bail!("ROM not found at {}", rom.display());
+        }
+        let cfg = RetroArchDirs::read(&cli.config)?;
+        let core_arg = cli
+            .core
+            .as_deref()
+            .context("--core is required without --image")?;
+        let core_path = core::resolve_core(core_arg, &cfg.libretro_dir)?;
+        let tmp = tempfile::Builder::new()
+            .prefix("ra-metal-capture-")
+            .tempdir()
+            .context("creating temp dir")?;
+
+        // Load the core first: its library name picks the options file and the slot directory.
+        let mut core = libretro::Core::load(
+            &core_path,
+            libretro::Context {
+                system_dir: cfg.system_dir.clone(),
+                save_dir: tmp.path().to_path_buf(),
+                options: HashMap::new(),
+            },
+        )?;
+        let info = core.system_info();
+        let options = cfg.core_options(&info.library_name)?;
+        core.set_options(options);
+        let av = core.load_game(&rom)?;
+        if cli.verbose {
+            eprintln!(
+                "core {} ({}x{} at {:.3} fps)",
+                info.library_name, av.base.width, av.base.height, av.fps
+            );
+        }
+
+        let state_path = match (&cli.state, cli.slot) {
+            (Some(p), _) => Some(p.clone()),
+            (None, Some(n)) => Some(state::slot_path(&cfg.states, &info.library_name, &rom, n)),
+            (None, None) => None,
+        };
+        let warmup = match state_path {
+            Some(path) => {
+                let bytes = std::fs::read(&path)
+                    .with_context(|| format!("reading state {}", path.display()))?;
+                let mem = state::decode(&bytes)
+                    .with_context(|| format!("decoding state {}", path.display()))?;
+                core.restore(&mem)
+                    .with_context(|| format!("restoring state {}", path.display()))?;
+                cli.advance - 1
+            }
+            None => (cli.settle * av.fps).round() as u32,
+        };
+        // `tmp` must outlive the core (it is the core's save dir); moving it
+        // into the box alongside the core keeps it alive until render::run returns.
+        (Box::new(CoreWithTemp { core, _tmp: tmp }), warmup)
+    };
+
     let opts = render::RenderOptions {
-        source: Box::new(render::ImageSource::open(image)?),
+        source,
         preset,
-        window: cli.window_mode(),
-        screen: display::main_screen(),
-        warmup: 0,
+        window,
+        screen,
+        warmup,
         frames: cli.frames,
         output: output.clone(),
         verbose: cli.verbose,
@@ -252,6 +328,83 @@ fn run_librashader(cli: &Cli) -> Result<()> {
     render::run(opts)?;
     println!("{}", output.display());
     Ok(())
+}
+
+/// A core plus the temp dir it was told to save into.
+#[cfg(feature = "librashader")]
+struct CoreWithTemp {
+    core: libretro::Core,
+    _tmp: tempfile::TempDir,
+}
+
+#[cfg(feature = "librashader")]
+impl render::FrameSource for CoreWithTemp {
+    fn size(&self) -> Size {
+        self.core.size()
+    }
+    fn next(&mut self) -> Result<Vec<u8>> {
+        self.core.next()
+    }
+}
+
+/// The RetroArch config keys the librashader core path reads.
+#[cfg(feature = "librashader")]
+struct RetroArchDirs {
+    libretro_dir: PathBuf,
+    system_dir: PathBuf,
+    config_dir: PathBuf,
+    states: state::StateDirs,
+}
+
+#[cfg(feature = "librashader")]
+impl RetroArchDirs {
+    fn read(path: &Path) -> Result<RetroArchDirs> {
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        let keys = config::read_all(&text);
+        let dir = |key: &str, default: &str| {
+            keys.get(key)
+                .map(|s| config::expand_tilde(s))
+                .unwrap_or_else(|| config::expand_tilde(default))
+        };
+        let flag = |key: &str, default: bool| keys.get(key).map(|v| v == "true").unwrap_or(default);
+        Ok(RetroArchDirs {
+            libretro_dir: dir(
+                "libretro_directory",
+                "~/Library/Application Support/RetroArch/cores",
+            ),
+            system_dir: dir(
+                "system_directory",
+                "~/Library/Application Support/RetroArch/system",
+            ),
+            config_dir: dir(
+                "rgui_config_directory",
+                "~/Library/Application Support/RetroArch/config",
+            ),
+            states: state::StateDirs {
+                savestate_directory: dir(
+                    "savestate_directory",
+                    "~/Library/Application Support/RetroArch/states",
+                ),
+                sort_by_core: flag("sort_savestates_enable", true),
+                sort_by_content: flag("sort_savestates_by_content_enable", false),
+                in_content_dir: flag("savestates_in_content_dir", false),
+            },
+        })
+    }
+
+    /// `<config dir>/<core name>/<core name>.opt`, or empty when absent.
+    fn core_options(&self, library_name: &str) -> Result<HashMap<String, String>> {
+        let path = self
+            .config_dir
+            .join(library_name)
+            .join(format!("{library_name}.opt"));
+        match std::fs::read_to_string(&path) {
+            Ok(text) => Ok(config::read_all(&text)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(HashMap::new()),
+            Err(e) => Err(e).with_context(|| format!("reading core options {}", path.display())),
+        }
+    }
 }
 
 fn run(cli: Cli) -> Result<()> {
@@ -502,10 +655,8 @@ mod tests {
     }
 
     #[test]
-    fn backend_defaults_to_retroarch_and_requires_image() {
+    fn backend_defaults_to_retroarch() {
         assert_eq!(parse_rom(&[]).unwrap().backend, Backend::Retroarch);
-        assert!(parse_rom(&["--backend", "librashader"]).is_err());
-        assert!(parse_rom(&["--backend", "retroarch"]).is_err());
         let cli = parse_raw(&[
             "--image",
             "s.png",
@@ -517,6 +668,73 @@ mod tests {
         .unwrap();
         assert_eq!(cli.backend, Backend::Librashader);
         assert!(parse_raw(&["--image", "s.png", "--backend", "bogus"]).is_err());
+    }
+
+    #[test]
+    fn librashader_accepts_core_and_rom_without_image() {
+        let cli = parse_raw(&[
+            "--backend",
+            "librashader",
+            "--core",
+            "c",
+            "--rom",
+            "r",
+            "--shader",
+            "p",
+        ])
+        .unwrap();
+        assert_eq!(cli.backend, Backend::Librashader);
+        assert!(cli.image.is_none());
+        assert!(
+            parse_raw(&[
+                "--backend",
+                "librashader",
+                "--core",
+                "c",
+                "--rom",
+                "r",
+                "--image",
+                "i"
+            ])
+            .is_err()
+        );
+        assert!(
+            parse_raw(&[
+                "--backend",
+                "librashader",
+                "--core",
+                "c",
+                "--rom",
+                "r",
+                "--state",
+                "s",
+                "--slot",
+                "1"
+            ])
+            .is_err()
+        );
+        assert!(
+            parse_raw(&["--backend", "librashader"]).is_err(),
+            "needs image or core+rom"
+        );
+    }
+
+    #[cfg(feature = "librashader")]
+    #[test]
+    fn librashader_core_path_refuses_a_zip_before_loading_anything() {
+        let cli = parse_raw(&[
+            "--backend",
+            "librashader",
+            "--core",
+            "/nonexistent/core.dylib",
+            "--rom",
+            "/nonexistent/game.zip",
+            "--shader",
+            "Cargo.toml",
+        ])
+        .unwrap();
+        let err = run_librashader(&cli).unwrap_err().to_string();
+        assert!(err.contains("zip"), "{err}");
     }
 
     #[test]
