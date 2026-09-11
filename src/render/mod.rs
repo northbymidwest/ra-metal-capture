@@ -33,6 +33,11 @@ use objc2_metal::{
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 
+/// Warm-up counts at or above this print a line first, so a long, silent
+/// warm-up (the default settle on a core is about 300 frames) is not
+/// mistaken for a hang.
+const WARMUP_PROGRESS_THRESHOLD: u32 = 60;
+
 /// Everything [`run`] needs: the frame source, the preset, how to size the
 /// output, how many frames to record, and where the bundle goes.
 pub struct RenderOptions {
@@ -228,6 +233,12 @@ pub fn run(mut opts: RenderOptions) -> Result<()> {
     };
 
     let mut count = 0usize;
+    if opts.warmup >= WARMUP_PROGRESS_THRESHOLD {
+        eprintln!(
+            "rendering {} warm-up frame(s) before the capture starts",
+            opts.warmup
+        );
+    }
     for _ in 0..opts.warmup {
         upload(&opts.source.next()?)?;
         render_one(count)?;
@@ -321,7 +332,7 @@ mod tests {
 
     #[test]
     fn image_source_open_decodes_the_fixture() {
-        let src = ImageSource::open(Path::new("sample.png")).unwrap();
+        let src = ImageSource::open(Path::new("fixtures/sample.png")).unwrap();
         assert_eq!(
             src.size(),
             Size {

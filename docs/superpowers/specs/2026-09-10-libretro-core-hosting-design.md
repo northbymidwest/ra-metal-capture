@@ -164,7 +164,7 @@ impl Core {
     /// `retro_run` once and return the frame it delivered (or the
     /// previous one on a dupe). Requires a loaded game, and fails if no
     /// frame has ever arrived.
-    pub fn run_frame(&mut self) -> Result<&Frame>;
+    pub fn run_frame(&mut self) -> Result<Frame>;
 }
 impl Drop for Core { /* retro_unload_game if loaded, retro_deinit if initialised, release the process slot */ }
 

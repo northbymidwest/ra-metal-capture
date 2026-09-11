@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate sample.png, the 160x144 fixture, within Game Boy Color limits.
+"""Generate fixtures/sample.png, the 160x144 fixture, within Game Boy Color limits.
 
 The scene (a cartoon house, an apple tree with a tire swing, grass, sky,
 one cloud, the sun) is drawn on the GBC's 8x8 tile grid and checked
@@ -15,7 +15,7 @@ against the hardware's rules before the PNG is written:
 Pure Python, no dependencies; the PNG is written by hand. The output is
 this repository's own work and carries its licence (0BSD).
 
-    scripts/gen-sample.py            # writes sample.png in the repo root
+    scripts/gen-sample.py            # writes fixtures/sample.png
     scripts/gen-sample.py OUT.png    # writes elsewhere
 """
 
@@ -321,7 +321,7 @@ def write_png(path, layer):
 
 
 def main():
-    out = sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent / "sample.png"
+    out = sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent / "fixtures" / "sample.png"
     bg = draw_background()
     sprites = draw_sprites()
     n_bg, n_obj = check(bg, sprites)

@@ -179,9 +179,10 @@ impl Core {
         // a libretro core, which is `resolve`'s requirement.
         let api = unsafe { resolve(&lib) }
             .with_context(|| format!("reading the libretro API of {}", dylib.display()))?;
-        // SAFETY: libretro.h documents retro_api_version as callable at any
-        // time, before retro_init included; it takes no arguments and only
-        // returns the constant the core was built against.
+        // SAFETY: retro_api_version takes no arguments and returns the
+        // constant the core was built against; RetroArch calls it before
+        // retro_init as well. libretro.h does not spell out a pre-init
+        // guarantee for it (it does for retro_get_system_info).
         let version = unsafe { (api.retro_api_version)() };
         if version != libretro_sys::API_VERSION {
             bail!(

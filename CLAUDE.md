@@ -41,7 +41,7 @@ not a test.
 Real run against the fixture (re-execs itself with `MTL_CAPTURE_ENABLED=1`):
 
 ```
-cargo run -q -- --image sample.png \
+cargo run -q -- --image fixtures/sample.png \
   --shader "$HOME/Library/Application Support/RetroArch/shaders/vectorscale/vectorscale.slangp" \
   --output sample.gputrace -v
 ```

@@ -311,6 +311,8 @@ fn run_librashader(cli: &Cli) -> Result<()> {
     }
     let output = std::path::absolute(&cli.output)
         .with_context(|| format!("resolving {}", cli.output.display()))?;
+    // Refuse a bad output path before loading anything.
+    capture::prepare_output(&output)?;
     let window = cli.window_mode();
     let screen = display::main_screen();
 
@@ -903,8 +905,8 @@ mod tests {
 
     #[test]
     fn image_mode_parses_alone_and_conflicts_with_emulator_flags() {
-        let cli = parse_raw(&["--image", "sample.png"]).unwrap();
-        assert_eq!(cli.image, Some(PathBuf::from("sample.png")));
+        let cli = parse_raw(&["--image", "fixtures/sample.png"]).unwrap();
+        assert_eq!(cli.image, Some(PathBuf::from("fixtures/sample.png")));
         assert!(cli.core.is_none() && cli.rom.is_none());
         assert!(parse_raw(&["--image", "s.png", "--core", "c"]).is_err());
         assert!(parse_raw(&["--image", "s.png", "--rom", "r"]).is_err());
@@ -1038,7 +1040,14 @@ mod tests {
     #[cfg(feature = "librashader")]
     #[test]
     fn librashader_path_rejects_retroarch_only_flags_before_anything_else() {
-        let cli = parse_raw(&["--image", "sample.png", "--keep-running", "--app", "/x"]).unwrap();
+        let cli = parse_raw(&[
+            "--image",
+            "fixtures/sample.png",
+            "--keep-running",
+            "--app",
+            "/x",
+        ])
+        .unwrap();
         let err = run_librashader(&cli).unwrap_err().to_string();
         assert!(err.contains("--app, --keep-running"), "{err}");
         assert!(err.contains("--backend retroarch"), "{err}");
@@ -1187,13 +1196,14 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("not found"), "{err}");
-        validate_image(Path::new("sample.png")).unwrap();
+        validate_image(Path::new("fixtures/sample.png")).unwrap();
     }
 
     #[cfg(feature = "librashader")]
     #[test]
     fn librashader_backend_requires_a_shader_before_touching_metal() {
-        let cli = parse_raw(&["--image", "sample.png", "--backend", "librashader"]).unwrap();
+        let cli =
+            parse_raw(&["--image", "fixtures/sample.png", "--backend", "librashader"]).unwrap();
         let err = run_librashader(&cli).unwrap_err().to_string();
         assert!(err.contains("--shader"), "{err}");
     }
@@ -1201,7 +1211,8 @@ mod tests {
     #[cfg(not(feature = "librashader"))]
     #[test]
     fn librashader_backend_is_refused_without_the_feature() {
-        let cli = parse_raw(&["--image", "sample.png", "--backend", "librashader"]).unwrap();
+        let cli =
+            parse_raw(&["--image", "fixtures/sample.png", "--backend", "librashader"]).unwrap();
         let err = run_librashader(&cli).unwrap_err().to_string();
         assert!(err.contains("librashader"), "{err}");
     }

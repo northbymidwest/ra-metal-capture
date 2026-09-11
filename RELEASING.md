@@ -21,8 +21,8 @@ The crate releases through `.github/workflows/release.yml`. Every release is a
 ## By hand, before dispatching
 
 1. Bump `version` in `Cargo.toml` to the new version.
-2. Remove the `publish = false` line (it is the deliberate safety net that
-   keeps the crate off crates.io until you mean it).
+2. Check that `Cargo.toml` carries no `publish = false` line (the safety net
+   that kept the crate off crates.io before its first release; absent since).
 3. Retitle the `## Unreleased` section of `CHANGELOG.md` to
    `## <version> - <YYYY-MM-DD>`.
 4. Commit, push, and wait for CI to go green.

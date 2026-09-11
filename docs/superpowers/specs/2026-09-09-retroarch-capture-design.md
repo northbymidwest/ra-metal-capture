@@ -1,5 +1,11 @@
 # ra-metal-capture design
 
+> Amended 2026-09-11. This is the original design of the RetroArch
+> capture, now selected with `--backend retroarch`; the in-process
+> librashader backend (2026-09-10 specs) is the default when compiled in.
+> The CLI block below predates `--backend`, `--image`, `--core-options`,
+> and `--skip-extension-check`; the README's flag table is current.
+
 A Rust CLI that launches a chosen RetroArch.app with a core, a ROM, a save
 state, and a shader preset, sizes the window, and uses Apple's `gpucapture(1)`
 to record one (or N) presented frames to a `.gputrace` bundle. No Xcode GUI,

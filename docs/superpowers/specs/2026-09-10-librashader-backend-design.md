@@ -1,9 +1,16 @@
 # librashader backend design
 
-> Amended 2026-09-11: `librashader` became the default backend whenever
-> the feature is compiled in; `--backend retroarch` selects the RetroArch
-> capture. Statements below that call `retroarch` the default describe
-> the design as first shipped.
+> Amended 2026-09-11. This spec describes the backend as first shipped in
+> 0.3.0. Since then: `librashader` is the default backend whenever the
+> feature is compiled in, with `--backend retroarch` selecting the RetroArch
+> capture; `--backend` no longer requires `--image`, because the
+> 2026-09-10 libretro core-hosting spec added `--core --rom` to this
+> backend along with warm-up frames, both listed as non-goals below;
+> `--config` and `--settle` are honoured under librashader (config parsed
+> lazily on a default-path miss, settle converted to emulated frames);
+> and `--app`, `--cmd-port`, and `--keep-running` are rejected under
+> librashader rather than ignored. Where the text below disagrees, the
+> code and the README are right.
 A second backend for image mode. Today `--image FILE` loads a static image
 through RetroArch's built-in image viewer and records RetroArch's presented
 frames with `gpucapture(1)`. This design adds `--backend librashader`, which

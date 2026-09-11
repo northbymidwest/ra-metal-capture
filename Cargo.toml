@@ -10,7 +10,7 @@ readme = "README.md"
 keywords = ["macos", "metal", "gpu", "gputrace", "retroarch"]
 categories = ["command-line-utilities", "development-tools::profiling"]
 # What a `cargo install` needs: the code, its tests and their fixture
-# (sample.png), and the README/LICENSE. Repository tooling and the design
+# (fixtures/sample.png), and the README/LICENSE. Repository tooling and the design
 # docs stay in git.
 exclude = [
     "/.github/",

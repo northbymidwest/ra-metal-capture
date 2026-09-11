@@ -65,12 +65,12 @@ A static image can be captured the same way, without a core or ROM:
 ```
 ra-metal-capture \
   --backend retroarch \
-  --image sample.png \
+  --image fixtures/sample.png \
   --shader "$HOME/Library/Application Support/RetroArch/shaders/vectorscale/vectorscale.slangp" \
   --output /tmp/sample-vectorscale.gputrace
 ```
 
-`sample.png` is the 160x144 fixture tracked in this repository: a cartoon
+`fixtures/sample.png` is the 160x144 fixture tracked in this repository: a cartoon
 scene drawn by `scripts/gen-sample.py` within Game Boy Color limits (8x8
 tiles, four colours per tile from at most eight palettes, three-colour
 sprites, RGB555), so a Game Boy shader sees the kind of input it was made
@@ -84,7 +84,7 @@ crate's Metal runtime inside this process, with no RetroArch at all:
 
 ```
 ra-metal-capture \
-  --image sample.png \
+  --image fixtures/sample.png \
   --shader "$HOME/Library/Application Support/RetroArch/shaders/vectorscale/vectorscale.slangp" \
   --output /tmp/sample-vectorscale-ls.gputrace
 ```
@@ -222,8 +222,10 @@ consecutive emulated frames.
 
 Warm-up frames leave the preset's history and feedback textures holding
 real data, which the trace records, so a run with many warm-up frames
-(`--advance 30`, or the default settle) writes a bundle roughly three
-times the size of one with none.
+(`--advance 30`, or the default settle) writes a bundle several times the
+size of one with none: about nine times in the measured runs. The tool
+prints a line on stderr before a long warm-up so the pause is not mistaken
+for a hang.
 
 A bare core name, `--slot N`, and the system directory are resolved
 against RetroArch's macOS layout (`~/Library/Application Support/RetroArch`
