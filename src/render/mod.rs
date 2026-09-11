@@ -19,9 +19,9 @@ use librashader::runtime::mtl::FilterChain;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{
-    MTLCommandBuffer, MTLCommandQueue, MTLCreateSystemDefaultDevice, MTLDevice, MTLOrigin,
-    MTLPixelFormat, MTLRegion, MTLSize, MTLStorageMode, MTLTexture, MTLTextureDescriptor,
-    MTLTextureUsage,
+    MTLCommandBuffer, MTLCommandQueue, MTLCreateSystemDefaultDevice, MTLDevice, MTLGPUFamily,
+    MTLOrigin, MTLPixelFormat, MTLRegion, MTLSize, MTLStorageMode, MTLTexture,
+    MTLTextureDescriptor, MTLTextureUsage,
 };
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
@@ -58,9 +58,16 @@ fn decode_bgra(path: &Path) -> Result<(Size, Vec<u8>)> {
     Ok((Size { width, height }, bytes))
 }
 
-/// A BGRA8 2D texture of `size` with `usage`, in shared memory on a device
-/// with unified memory (Apple silicon, natively or under Rosetta) and
-/// managed memory otherwise.
+/// A BGRA8 2D texture of `size` with `usage`, in shared memory on an
+/// Apple-family GPU (Apple silicon, natively or under Rosetta), which has no
+/// managed storage, and managed memory otherwise.
+///
+/// The family is asked rather than `hasUnifiedMemory`, which would be the
+/// direct question: under `MTL_CAPTURE_ENABLED=1` the device is a
+/// `CaptureMTLDevice` that forwards `hasUnifiedMemory` instead of
+/// implementing it, and objc2's debug-build message-send check looks the
+/// selector up with `class_getInstanceMethod` and panics when it is missing.
+/// `supportsFamily:` is a real method on that class.
 fn new_texture(
     device: &ProtocolObject<dyn MTLDevice>,
     size: Size,
@@ -76,7 +83,7 @@ fn new_texture(
             false,
         )
     };
-    desc.setStorageMode(if device.hasUnifiedMemory() {
+    desc.setStorageMode(if device.supportsFamily(MTLGPUFamily::Apple1) {
         MTLStorageMode::Shared
     } else {
         MTLStorageMode::Managed
