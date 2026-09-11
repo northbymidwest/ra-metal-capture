@@ -13,7 +13,7 @@ Xcode's GPU debugger.
 
 - macOS 27+ and Xcode 27+
 - Rust 1.98+
-- RetroArch.app, only for the RetroArch backend
+- RetroArch.app, only for the RetroArch backend (optional when built with the librashader feature, the default)
 
 ## Install
 
