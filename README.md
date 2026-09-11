@@ -70,8 +70,12 @@ ra-metal-capture \
   --output /tmp/sample-vectorscale.gputrace
 ```
 
-`sample.png` is the 160x144 fixture tracked in this repository; any PNG (or
-other accepted image format) works in its place. `--image` replaces
+`sample.png` is the 160x144 fixture tracked in this repository: a cartoon
+scene drawn by `scripts/gen-sample.py` within Game Boy Color limits (8x8
+tiles, four colours per tile from at most eight palettes, three-colour
+sprites, RGB555), so a Game Boy shader sees the kind of input it was made
+for. It is this repository's own work under its licence. Any PNG (or other
+accepted image format) works in its place. `--image` replaces
 `--core` and `--rom` with a file loaded through RetroArch's built-in image
 viewer; see [Image mode](#image-mode) below.
 

@@ -9,8 +9,9 @@ repository = "https://github.com/northbymidwest/ra-metal-capture"
 readme = "README.md"
 keywords = ["macos", "metal", "gpu", "gputrace", "retroarch"]
 categories = ["command-line-utilities", "development-tools::profiling"]
-# What a `cargo install` needs: the code, its tests, and the README/LICENSE.
-# Repository tooling and the design docs stay in git.
+# What a `cargo install` needs: the code, its tests and their fixture
+# (sample.png), and the README/LICENSE. Repository tooling and the design
+# docs stay in git.
 exclude = [
     "/.github/",
     "/.githooks/",
@@ -20,7 +21,6 @@ exclude = [
     "/typos.toml",
     "/RELEASING.md",
     "/CLAUDE.md",
-    "/sample.png",
 ]
 
 # docs.rs builds on Linux; this crate links AppKit through objc2-app-kit,
