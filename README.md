@@ -37,14 +37,16 @@ viewer, in place of an emulator core and ROM; see [Image mode](#image-mode).
 - Rust 1.98 or newer to build.
 - The default build compiles librashader and its C++ dependencies (glslang,
   SPIRV-Cross) from source, about 30 s on an M-series Mac for a clean
-  build. `cargo install --path . --no-default-features` skips them and
+  build. `cargo install ra-metal-capture --no-default-features` skips them and
   gives a RetroArch-only tool without `--backend librashader`.
 
 ## Install
 
 ```
-cargo install --path .
+cargo install ra-metal-capture
 ```
+
+From a checkout, `cargo install --path .` builds the same binary.
 
 ## Usage
 
