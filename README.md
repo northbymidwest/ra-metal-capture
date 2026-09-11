@@ -143,8 +143,10 @@ for BIOS files, points the core at a per-run save directory and a per-run
 core options file (a copy of `--core-options`, or empty so the core runs
 on its defaults), keeps RetroArch rendering when unfocused, turns off
 config-save-on-exit, savestate auto-save and auto-load, config and remap
-overrides, and the content history, and hides the load-content animation
-and on-screen text so nothing lands in the captured frame. RetroArch is
+overrides, the content history, and the first-run asset-bundle extraction
+(which would otherwise reinitialise every driver a few seconds into the
+run, under the capture), and hides the load-content animation and
+on-screen text so nothing lands in the captured frame. RetroArch is
 also launched with `--sram-mode noload-nosave`, so it never reads or
 writes `.srm` and `.rtc` files: your save data is untouched, and the game
 boots from empty SRAM as a hosted core does (a save state carries its own

@@ -88,6 +88,12 @@ impl RunConfig {
             ("auto_remaps_enable", "false".into()),
             ("auto_shaders_enable", "false".into()),
             ("history_list_enable", "false".into()),
+            // On a config that has never recorded an asset-bundle
+            // extraction RetroArch extracts its bundled assets at startup,
+            // a task of a few seconds that ends by reinitialising every
+            // driver and saving the config. That reinit tears down the
+            // Vulkan device under a capture in progress.
+            ("bundle_assets_extract_enable", "false".into()),
             ("pause_nonactive", "false".into()),
             ("menu_show_load_content_animation", "false".into()),
             ("video_font_enable", "false".into()),
@@ -173,6 +179,7 @@ auto_overrides_enable = \"false\"\n\
 auto_remaps_enable = \"false\"\n\
 auto_shaders_enable = \"false\"\n\
 history_list_enable = \"false\"\n\
+bundle_assets_extract_enable = \"false\"\n\
 pause_nonactive = \"false\"\n\
 menu_show_load_content_animation = \"false\"\n\
 video_font_enable = \"false\"\n";

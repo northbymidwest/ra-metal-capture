@@ -71,7 +71,12 @@ The same command with `--backend retroarch` launches
   launched on a per-run config in a temp dir (`-c`) that
   `retroarch::runconfig::RunConfig` writes from scratch, so any setting a
   run needs (the Vulkan driver, `video_shader_enable`) must be in that
-  file; nothing else supplies it. Every launch passes `--sram-mode
+  file; nothing else supplies it. A fresh config also triggers RetroArch's
+  first-run asset-bundle extraction, whose completion reinitialises every
+  driver a few seconds into the run and saves the config; the run config
+  disables it (`bundle_assets_extract_enable`), and any new key that makes
+  RetroArch reinit mid-run will show up as gpucapture reporting "process
+  crashed or disconnected". Every launch passes `--sram-mode
   noload-nosave` so RetroArch never touches `.srm`/`.rtc` files. A
   `--state` file is copied into the temp dir rather than loaded in place.
 - `deny.toml` lists exactly the licenses the tree uses with

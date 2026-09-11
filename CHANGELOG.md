@@ -31,6 +31,11 @@ Notable changes per release. Dates are the publish date.
   directory, so it never reads or writes `.srm`/`.rtc` files; earlier
   versions let RetroArch flush SRAM into the user's saves on exit, which
   after a state load rewrote the game's `.srm` with the state's SRAM.
+- The run config turns off RetroArch's first-run asset-bundle extraction.
+  On a config that has never recorded one, RetroArch extracts its bundled
+  assets at startup and, a few seconds in, reinitialises every driver and
+  saves the config; under a paused capture that tore down the Vulkan
+  device and failed the run.
 - `--core-options` applies to both backends. Without it a core under
   RetroArch now runs on its built-in defaults, as a hosted core always
   did, instead of the per-core options RetroArch had saved.
