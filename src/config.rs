@@ -14,9 +14,9 @@ pub fn expand_tilde(s: &str) -> PathBuf {
     }
 }
 
-/// Read the named keys from RetroArch `key = "value"` config text.
-/// Missing keys are simply absent from the map. Surrounding quotes are stripped.
-pub fn read_keys(text: &str, keys: &[&str]) -> HashMap<String, String> {
+/// Every `key = "value"` pair in RetroArch config text. Comments and blank
+/// lines are skipped; surrounding quotes are stripped.
+pub fn read_all(text: &str) -> HashMap<String, String> {
     let mut out = HashMap::new();
     for line in text.lines() {
         let line = line.trim();
@@ -26,18 +26,22 @@ pub fn read_keys(text: &str, keys: &[&str]) -> HashMap<String, String> {
         let Some((k, v)) = line.split_once('=') else {
             continue;
         };
-        let k = k.trim();
-        if !keys.contains(&k) {
-            continue;
-        }
         let v = v.trim();
         let v = v
             .strip_prefix('"')
             .and_then(|v| v.strip_suffix('"'))
             .unwrap_or(v);
-        out.insert(k.to_string(), v.to_string());
+        out.insert(k.trim().to_string(), v.to_string());
     }
     out
+}
+
+/// The named keys from RetroArch `key = "value"` config text.
+/// Missing keys are simply absent from the map.
+pub fn read_keys(text: &str, keys: &[&str]) -> HashMap<String, String> {
+    let mut all = read_all(text);
+    all.retain(|k, _| keys.contains(&k.as_str()));
+    all
 }
 
 /// A width and height in points.
@@ -168,6 +172,17 @@ mod tests {
     fn tolerates_unquoted_values_and_extra_whitespace() {
         let m = read_keys("  x   =   3  \n", &["x"]);
         assert_eq!(m["x"], "3");
+    }
+
+    #[test]
+    fn read_all_returns_every_key() {
+        let text =
+            "# comment\nsameboy_model = \"Auto\"\n\nsameboy_border = \"Never\"\nunquoted = 3\n";
+        let m = read_all(text);
+        assert_eq!(m.len(), 3);
+        assert_eq!(m["sameboy_model"], "Auto");
+        assert_eq!(m["sameboy_border"], "Never");
+        assert_eq!(m["unquoted"], "3");
     }
 
     #[test]
