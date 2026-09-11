@@ -5,8 +5,11 @@ use clap::Parser;
 use ra_metal_capture::config::{self, AppendConfig, PausedConfig, Size, WindowMode};
 use ra_metal_capture::image::{EXTENSIONS, is_image_path};
 use ra_metal_capture::launch::{LaunchPlan, build_command};
+#[cfg(feature = "librashader")]
+use ra_metal_capture::render;
 use ra_metal_capture::{app, capture, core, display, remote, state};
-use std::path::PathBuf;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 fn default_config() -> PathBuf {
@@ -38,8 +41,18 @@ fn parse_settle(s: &str) -> std::result::Result<f64, String> {
     Ok(v)
 }
 
+/// Which renderer image mode uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum Backend {
+    /// RetroArch's built-in image viewer, recorded with gpucapture
+    Retroarch,
+    /// librashader's Metal runtime in this process, recorded with MTLCaptureManager
+    Librashader,
+}
+
 /// Launch RetroArch with a ROM and save state, or a static image, plus a
-/// shader preset, then capture frames to a .gputrace with gpucapture.
+/// shader preset, then capture frames to a .gputrace with gpucapture; or
+/// render a static image through librashader in-process.
 #[derive(Parser, Debug)]
 #[command(version)]
 struct Cli {
@@ -68,6 +81,10 @@ struct Cli {
     /// Static image to capture via RetroArch's image viewer; replaces --core and --rom
     #[arg(long, conflicts_with_all = ["core", "rom", "state", "slot", "advance"])]
     image: Option<PathBuf>,
+
+    /// Renderer for --image: retroarch (default) or librashader
+    #[arg(long, value_enum, default_value_t = Backend::Retroarch, requires = "image", conflicts_with_all = ["core", "rom", "state", "slot", "advance"])]
+    backend: Backend,
 
     /// Save state file to load at launch (staged as slot 0 in a temp dir)
     #[arg(long, conflicts_with = "slot")]
@@ -142,10 +159,100 @@ impl Cli {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    #[cfg(feature = "librashader")]
+    if cli.backend == Backend::Librashader {
+        reexec_with_capture_env()?;
+    }
     run(cli)
 }
 
+/// Whether `MTL_CAPTURE_ENABLED` needs setting: Metal offers programmatic
+/// capture to a trace document only when it is exactly `1` at load time.
+///
+/// Only called from `reexec_with_capture_env` (feature-gated); without the
+/// "librashader" feature it is exercised solely by its own test.
+#[cfg_attr(not(feature = "librashader"), allow(dead_code))]
+fn needs_capture_env(current: Option<&OsStr>) -> bool {
+    current != Some(OsStr::new("1"))
+}
+
+/// Replace this process with itself, same arguments, plus
+/// `MTL_CAPTURE_ENABLED=1`, unless that is already set. `exec` only returns
+/// on failure. After the re-exec the variable is `1`, so this never loops;
+/// if Metal still refuses, `render::run` fails with a message naming it.
+#[cfg(feature = "librashader")]
+fn reexec_with_capture_env() -> Result<()> {
+    use std::os::unix::process::CommandExt;
+    if !needs_capture_env(std::env::var_os(render::CAPTURE_ENV).as_deref()) {
+        return Ok(());
+    }
+    let exe = std::env::current_exe().context("locating this executable to re-exec it")?;
+    let err = std::process::Command::new(&exe)
+        .args(std::env::args_os().skip(1))
+        .env(render::CAPTURE_ENV, "1")
+        .exec();
+    Err(err).with_context(|| {
+        format!(
+            "re-executing {} with {}=1",
+            exe.display(),
+            render::CAPTURE_ENV
+        )
+    })
+}
+
+/// `--image` must carry an extension the image viewer accepts and exist.
+fn validate_image(image: &Path) -> Result<()> {
+    if !is_image_path(image) {
+        bail!(
+            "{} does not have an image extension the image viewer accepts ({})",
+            image.display(),
+            EXTENSIONS.join(", ")
+        );
+    }
+    if !image.is_file() {
+        bail!("image not found at {}", image.display());
+    }
+    Ok(())
+}
+
+#[cfg(not(feature = "librashader"))]
+fn run_librashader(_cli: &Cli) -> Result<()> {
+    bail!(
+        "this build has no librashader backend; reinstall with the \"librashader\" \
+         feature (it is on by default)"
+    )
+}
+
+#[cfg(feature = "librashader")]
+fn run_librashader(cli: &Cli) -> Result<()> {
+    let image = cli.image.as_deref().context("--backend requires --image")?;
+    validate_image(image)?;
+    let preset = cli.shader.clone().context(
+        "--backend librashader requires --shader: there is nothing to render without a preset",
+    )?;
+    if !preset.is_file() {
+        bail!("shader preset not found at {}", preset.display());
+    }
+    let output = std::path::absolute(&cli.output)
+        .with_context(|| format!("resolving {}", cli.output.display()))?;
+    let opts = render::RenderOptions {
+        image: image.to_path_buf(),
+        preset,
+        window: cli.window_mode(),
+        screen: display::main_screen(),
+        frames: cli.frames,
+        output: output.clone(),
+        verbose: cli.verbose,
+    };
+    render::run(&opts)?;
+    println!("{}", output.display());
+    Ok(())
+}
+
 fn run(cli: Cli) -> Result<()> {
+    if cli.backend == Backend::Librashader {
+        return run_librashader(&cli);
+    }
     let binary = app::resolve_binary(&cli.app)?;
 
     let cfg_text = std::fs::read_to_string(&cli.config)
@@ -157,16 +264,7 @@ fn run(cli: Cli) -> Result<()> {
         .unwrap_or_else(|| config::expand_tilde("~/Library/Application Support/RetroArch/cores"));
 
     let (core, content) = if let Some(image) = &cli.image {
-        if !is_image_path(image) {
-            bail!(
-                "{} does not have an image extension the image viewer accepts ({})",
-                image.display(),
-                EXTENSIONS.join(", ")
-            );
-        }
-        if !image.is_file() {
-            bail!("image not found at {}", image.display());
-        }
+        validate_image(image)?;
         (None, image.clone())
     } else {
         let core_arg = cli
@@ -280,6 +378,7 @@ fn run(cli: Cli) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     fn parse_rom(args: &[&str]) -> std::result::Result<Cli, clap::Error> {
         let mut full = vec![
@@ -389,5 +488,61 @@ mod tests {
         assert!(parse_raw(&["--core", "c"]).is_err());
         assert!(parse_raw(&["--rom", "r"]).is_err());
         assert!(parse_raw(&["--core", "c", "--rom", "r"]).is_ok());
+    }
+
+    #[test]
+    fn backend_defaults_to_retroarch_and_requires_image() {
+        assert_eq!(parse_rom(&[]).unwrap().backend, Backend::Retroarch);
+        assert!(parse_rom(&["--backend", "librashader"]).is_err());
+        assert!(parse_rom(&["--backend", "retroarch"]).is_err());
+        let cli = parse_raw(&[
+            "--image",
+            "s.png",
+            "--shader",
+            "p.slangp",
+            "--backend",
+            "librashader",
+        ])
+        .unwrap();
+        assert_eq!(cli.backend, Backend::Librashader);
+        assert!(parse_raw(&["--image", "s.png", "--backend", "bogus"]).is_err());
+    }
+
+    #[test]
+    fn capture_env_reexec_decision() {
+        use std::ffi::OsStr;
+        assert!(needs_capture_env(None));
+        assert!(needs_capture_env(Some(OsStr::new("0"))));
+        assert!(needs_capture_env(Some(OsStr::new(""))));
+        assert!(!needs_capture_env(Some(OsStr::new("1"))));
+    }
+
+    #[test]
+    fn validate_image_checks_extension_then_existence() {
+        let err = validate_image(Path::new("Cargo.toml"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("extension"), "{err}");
+        let err = validate_image(Path::new("/nonexistent/x.png"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not found"), "{err}");
+        validate_image(Path::new("sample.png")).unwrap();
+    }
+
+    #[cfg(feature = "librashader")]
+    #[test]
+    fn librashader_backend_requires_a_shader_before_touching_metal() {
+        let cli = parse_raw(&["--image", "sample.png", "--backend", "librashader"]).unwrap();
+        let err = run_librashader(&cli).unwrap_err().to_string();
+        assert!(err.contains("--shader"), "{err}");
+    }
+
+    #[cfg(not(feature = "librashader"))]
+    #[test]
+    fn librashader_backend_is_refused_without_the_feature() {
+        let cli = parse_raw(&["--image", "sample.png", "--backend", "librashader"]).unwrap();
+        let err = run_librashader(&cli).unwrap_err().to_string();
+        assert!(err.contains("librashader"), "{err}");
     }
 }
