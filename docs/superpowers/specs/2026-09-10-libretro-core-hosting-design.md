@@ -331,6 +331,23 @@ Success is a bundle whose recorded frame shows the same scene as the
 state's `.state.png` thumbnail and whose second command buffer differs
 from the first.
 
+**Verified 2026-09-11.** All four runs passed on an M-series Mac with the
+SameBoy core and Link's Awakening DX. The command above loaded the core
+(`SameBoy (160x144 at 59.728 fps)`), reported `source 160x144 -> output
+3071x2764 px, 0 warm-up + 2 recorded frame(s)`, exited 0, and wrote a 35 MB
+bundle with an `index` entry in 1.2 s warm (4.0 s on the first, cold run).
+`gpudebug` reports exactly two command buffers of 14 encoders each.
+`--slot 0` resolved to the same state under `sort_savestates_enable` and
+produced byte-identical input and output textures. `--advance 30` reported
+29 warm-up frames and a different input texture, and its bundle grew to
+107 MB because the warm-up frames fill the preset's history and feedback
+targets (792 resource objects against 163). Without a state the default
+`--settle 5` ran 299 warm-up frames and recorded the wave intro scene, past
+the boot logo. The RetroArch backend still captures the same core, ROM, and
+state through `gpucapture` and leaves no process behind. Frame content was
+checked against the spike's rendered frames and the state's `.state.png`
+thumbnail, not in Xcode's GPU debugger.
+
 ## Repository policy changes
 
 - **Dependencies** (all behind the `librashader` feature): `libretro-sys`

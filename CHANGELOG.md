@@ -2,6 +2,29 @@
 
 Notable changes per release. Dates are the publish date.
 
+## Unreleased
+
+### Added
+
+- `--backend librashader --core CORE --rom ROM [--state FILE | --slot N]`:
+  host a software-rendered libretro core in this process, restore a
+  RetroArch save state, and record emulated frames through the shader
+  preset with no RetroArch process. `--frames N` records N consecutive
+  emulated frames; `--advance` and `--settle` keep their meanings.
+- `libretro` module (feature `librashader`): `Core`, `Context`, `AvInfo`,
+  `Frame`, `pixels::to_bgra`.
+- `render::FrameSource` and `render::ImageSource`.
+- `state::decode`, `state::slot_path`, `state::StateDirs`; `config::read_all`.
+
+### Changed
+
+- Breaking library API: `render::RenderOptions.image` is replaced by
+  `source: Box<dyn FrameSource>` and the struct gains `warmup: u32`;
+  `render::run` takes `RenderOptions` by value.
+- `--backend librashader` no longer requires `--image`.
+- New optional dependencies behind the `librashader` feature:
+  `libretro-sys`, `libloading`, `flate2`; `deny.toml` allows ISC.
+
 ## 0.3.0 - 2026-09-10
 
 ### Added

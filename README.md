@@ -79,23 +79,35 @@ ra-metal-capture \
   --output /tmp/sample-vectorscale-ls.gputrace
 ```
 
+A libretro core can be hosted the same way, with no RetroArch process:
+
+```
+ra-metal-capture \
+  --backend librashader \
+  --core sameboy \
+  --rom "path/to/game.gbc" \
+  --state "path/to/game.state" \
+  --shader "$HOME/Library/Application Support/RetroArch/shaders/vectorscale/vectorscale.slangp" \
+  --output /tmp/game-ls.gputrace
+```
+
 | flag | meaning |
 |---|---|
 | `--app PATH` | `.app` bundle or its binary. Default `/Applications/RetroArch.app`. |
 | `--core CORE` | `.dylib` path, or a bare name resolved in `libretro_directory` (`sameboy` finds `sameboy_libretro.dylib`). |
 | `--rom PATH` | content to load |
 | `--image FILE` | static image via RetroArch's image viewer; replaces `--core` and `--rom`; incompatible with `--state`, `--slot`, `--advance` |
-| `--backend NAME` | renderer for `--image`: `retroarch` (default) or `librashader`; requires `--image`; `librashader` requires `--shader` and ignores `--app`, `--config`, `--settle`, `--cmd-port`, `--keep-running` |
+| `--backend NAME` | renderer: `retroarch` (default) or `librashader`; `librashader` requires `--shader` and takes either `--image` or `--core` with `--rom`; ignores `--app`, `--cmd-port`, `--keep-running` |
 | `--output PATH` | output `.gputrace` path (required) |
-| `--state FILE` | save state to load; copied to a temp states dir as slot 0 |
-| `--slot N` | load slot N from your real states dir instead |
+| `--state FILE` | save state to load; copied to a temp states dir as slot 0, or under librashader restored into the hosted core after the ROM loads |
+| `--slot N` | load slot N from your real states dir instead; under librashader the file is found the way RetroArch names it under `savestate_directory` |
 | `--shader PRESET` | `.slangp` / `.glslp` passed via `--set-shader` |
 | `--config PATH` | `retroarch.cfg` to base the run on; default `~/Library/Application Support/RetroArch/config/retroarch.cfg` |
 | `--size WxH` | exact window size in points (RetroArch) or output size in pixels (librashader) |
 | `--scale N` | integer scale of the core's native resolution |
 | `--fullscreen` | launch with `-f` |
-| `--settle SECS` | wait before capturing when no state is given (default 5) |
-| `--advance N` | frame advances after loading the state, before the capture is armed (default 1, min 1); only applies when `--state` or `--slot` is given |
+| `--settle SECS` | wait before capturing when no state is given (default 5); under librashader, `round(SECS * fps)` emulated frames run before recording instead |
+| `--advance N` | frame advances after loading the state, before the capture is armed (default 1, min 1); only applies when `--state` or `--slot` is given; under librashader, emulated frames run after the state and the Nth is the recorded one |
 | `--cmd-port PORT` | UDP port for RetroArch's command interface, enabled only for this run (default 55355) |
 | `--frames N` | frame boundaries to record (RetroArch) or frames to render with the frame count advancing (librashader) (default 1) |
 | `--keep-running` | do not close RetroArch afterwards |
@@ -175,6 +187,25 @@ scale, aspect preserved, matching RetroArch's fill mode. RetroArch and
 librashader are different implementations of the preset format; the
 librashader trace is of librashader's rendering, not a pixel-exact stand-in
 for RetroArch's.
+
+### Cores
+
+Under `--backend librashader`, `--core` and `--rom` load the libretro core
+into this process instead of launching RetroArch. The core runs headless:
+no window, no input (every button reads as released, which is what makes
+the run repeatable), no audio. `--state` restores a RetroArch save state
+(RetroArch's compressed and container formats are both read); `--slot N`
+finds it the way RetroArch names it under `savestate_directory`. The
+core's options come from RetroArch's per-core options file, so it renders
+the same frame RetroArch would. `--advance N` then runs N frames, the last
+of which is recorded, matching the RetroArch backend; without a state,
+`--settle` seconds of frames run first. Every frame before the recorded
+one still passes through the preset, so history-dependent passes see real
+prior frames, and `--frames N` records N consecutive emulated frames.
+
+Only software-rendered cores are supported; a core that asks for an
+OpenGL or Vulkan context is refused. Zipped ROMs must be extracted first.
+Cores that need BIOS files read them from `system_directory`.
 
 ## Development
 

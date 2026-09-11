@@ -49,7 +49,9 @@ and captures through `gpucapture`.
 - ASCII only in every tracked file: no em dashes, en dashes, arrows, or
   typographic quotes. `scripts/check-ascii.sh` fails CI otherwise.
 - `#![deny(unsafe_code)]` in `lib.rs` and `main.rs`. `unsafe` is allowed only
-  inside `src/render/`, each block with a `// SAFETY:` comment.
+  inside `src/render/` and `src/libretro/`, each block with a `// SAFETY:`
+  comment. The six `extern "C"` libretro callbacks in `src/libretro/env.rs`
+  are the only hand-written C ABI; they must never unwind.
 - All Metal and AppKit calls go through `objc2-metal`, `objc2-foundation`,
   and `objc2-app-kit`. Never write an `extern` block or hand-rolled FFI.
 - Under `MTL_CAPTURE_ENABLED=1` Metal wraps the device in a capture proxy
@@ -89,15 +91,30 @@ advancing until the capture closes, because a paused RetroArch only
 presents on a frame advance. The measured constants and their reasons are
 in the doc comments on `capture.rs` and in the spec.
 
-`render/mod.rs` decodes the image, builds BGRA8 textures, loads the preset
-with `librashader::runtime::mtl::FilterChain`, and renders `--frames`
-command buffers between `Trace::start` and `Trace::finish`
+`libretro/mod.rs` hosts a core in this process: `Core::load` dlopens the
+`.dylib` through `libloading`, calls `retro_init`, loads the ROM, and hands
+back `AvInfo`; `Core::restore` feeds a decoded state to `retro_unserialize`
+and `Core::run_frame` runs one `retro_run` and returns the `Frame` the core
+delivered. libretro's callbacks carry no user pointer, so everything they
+need lives in a process-wide static in `libretro/env.rs`, and `Core::load`
+therefore refuses a second core in the same process; `Drop` unloads the
+game, deinitializes, and releases that slot. `Context` carries the config
+the `environment` callback answers from (system and save directories, core
+options read from RetroArch's per-core `.opt` file). A `Core` is a
+`render::FrameSource`, which is how emulated frames reach the render loop.
+
+`render/mod.rs` builds BGRA8 textures, loads the preset with
+`librashader::runtime::mtl::FilterChain`, and runs a two-phase loop over a
+`FrameSource`: `warmup` frames are rendered before `Trace::start`, so
+history and frame-count passes see real prior frames, then `--frames`
+command buffers are rendered between `Trace::start` and `Trace::finish`
 (`render/trace.rs`, a guard over `MTLCaptureManager` whose drop stops an
-unfinished capture). Preset compilation happens before the capture starts
-so only the frame command buffers land in the bundle. `output_size` maps
-the shared window modes to pixels (RetroArch's are points): `Exact` is
-pixels as given, `Scale` multiplies the image, `Fullscreen` and the default
-fill use `display::Screen`'s backing scale.
+unfinished capture). The frame count advances across both phases. Preset
+compilation happens before the capture starts so only the recorded frame
+command buffers land in the bundle. `output_size` maps the shared window
+modes to pixels (RetroArch's are points): `Exact` is pixels as given,
+`Scale` multiplies the source size, `Fullscreen` and the default fill use
+`display::Screen`'s backing scale.
 
 `config::AppendConfig` is the single place RetroArch settings are
 overridden; `config::WindowMode` is shared by both backends. `display`
