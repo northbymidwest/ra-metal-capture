@@ -2,17 +2,18 @@
 //! in this process, through the preset with librashader's Metal runtime,
 //! and write the trace with Metal's capture API. No RetroArch process.
 
+pub mod interrupt;
 pub mod libretro;
 pub mod render;
 
 use crate::backend::{Backend, Request, Source, StateSource};
 use crate::config::{self, Size};
 use crate::layout::{DirResolver, Located, describe_tried, settle_frames};
-use crate::{bundle, display, state};
+use crate::{bundle, display, image_file, state};
 use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
 use std::ffi::OsStr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The in-process backend. It has no configuration of its own: everything
 /// it needs is in the request or RetroArch's on-disk layout.
@@ -45,124 +46,75 @@ impl Backend for Hosted {
     }
 
     fn run(&self, request: Request) -> Result<()> {
-        let preset = request.shader.clone();
+        let Request {
+            source,
+            shader: preset,
+            window,
+            frames,
+            settle,
+            advance,
+            output,
+            config,
+            verbose,
+        } = request;
         if !preset.is_file() {
             bail!("shader preset not found at {}", preset.display());
         }
         // Refuse a bad output path before loading anything.
-        bundle::prepare_output(&request.output)?;
+        bundle::prepare_output(&output)?;
+        interrupt::install();
         let screen = display::main_screen();
 
         let mut stdout: Option<StdoutToStderr> = None;
-        let (source, warmup): (Box<dyn render::FrameSource>, u32) = match &request.source {
+        let (source, warmup): (Box<dyn render::FrameSource>, u32) = match source {
             Source::Image(image) => {
-                validate_image(image)?;
-                (Box::new(render::ImageSource::open(image)?), 0)
+                validate_image(&image)?;
+                (Box::new(render::ImageSource::open(&image)?), 0)
             }
             Source::Core {
-                core: core_arg,
+                core,
                 rom,
                 state,
                 options,
                 skip_extension_check,
             } => {
-                libretro::refuse_zip(rom)?;
+                libretro::refuse_zip(&rom)?;
                 if !rom.is_file() {
                     bail!("ROM not found at {}", rom.display());
                 }
-                let mut dirs = DirResolver::for_config(request.config.as_deref(), request.verbose);
-                let core_path = dirs.core(core_arg)?;
-                let options = match options {
-                    Some(path) => {
-                        let text = std::fs::read_to_string(path)
-                            .with_context(|| format!("reading core options {}", path.display()))?;
-                        config::read_all(&text)
-                    }
-                    None => HashMap::new(),
+                let mut dirs = DirResolver::for_config(config.as_deref(), verbose);
+                let run = CoreRun {
+                    core_path: dirs.core(&core)?,
+                    rom,
+                    state,
+                    options: read_options(options.as_deref())?,
+                    skip_extension_check,
+                    system_dir: dirs.system_dir(),
+                    settle,
+                    advance,
+                    verbose,
                 };
-                let system_dir = dirs.system_dir();
-                let tmp = tempfile::Builder::new()
-                    .prefix("ra-metal-capture-")
-                    .tempdir()
-                    .context("creating temp dir")?;
-
                 // A hosted core may print to stdout; keep that off the stream
                 // this tool reports the output path on.
                 stdout = Some(StdoutToStderr::redirect()?);
-                // Open the core before initialising it: a core may read its
-                // options as early as `retro_init`, so they travel in the Context.
-                let mut core = libretro::Core::open(&core_path)?;
-                let info = core.system_info();
-                if !skip_extension_check && !info.accepts_extension(rom) {
-                    bail!(
-                        "{} does not have an extension {} accepts ({}); pass --skip-extension-check to load it anyway",
-                        rom.display(),
-                        info.library_name,
-                        info.valid_extensions.join(", ")
-                    );
-                }
-                core.init(libretro::Context {
-                    system_dir,
-                    save_dir: tmp.path().to_path_buf(),
-                    options,
-                })?;
-                let av = core.load_game(rom)?;
-                if request.verbose {
-                    eprintln!(
-                        "core {} ({}x{} at {:.3} fps)",
-                        info.library_name, av.base.width, av.base.height, av.fps
-                    );
-                }
-
-                let state_path = match state {
-                    Some(StateSource::File(p)) => Some(p.clone()),
-                    Some(StateSource::Slot(n)) => {
-                        match dirs.locate(
-                            "save state slot",
-                            |d| state::slot_path(&d.states, &info.library_name, rom, *n),
-                            |p| p.is_file(),
-                        ) {
-                            Located::Found(p) => Some(p),
-                            Located::Missing(tried) => {
-                                bail!("slot {n} not found at {}", describe_tried(&tried))
-                            }
-                        }
-                    }
-                    None => None,
-                };
-                let warmup = match state_path {
-                    Some(path) => {
-                        let bytes = std::fs::read(&path)
-                            .with_context(|| format!("reading state {}", path.display()))?;
-                        let mem = state::decode(&bytes)
-                            .with_context(|| format!("decoding state {}", path.display()))?;
-                        core.restore(&mem)
-                            .with_context(|| format!("restoring state {}", path.display()))?;
-                        request.advance - 1
-                    }
-                    None => settle_frames(request.settle, av.fps),
-                };
-                // `tmp` must outlive the core (it is the core's save dir);
-                // moving it into the box alongside the core keeps it alive
-                // until render::run returns.
-                (Box::new(CoreWithTemp { core, _tmp: tmp }), warmup)
+                let (core, warmup) = boot_core(run, &mut dirs)?;
+                (Box::new(core), warmup)
             }
         };
 
-        let opts = render::RenderOptions {
+        render::run(render::RenderOptions {
             source,
             preset,
-            window: request.window.clone(),
+            window,
             screen,
             warmup,
-            frames: request.frames,
-            output: request.output.clone(),
-            verbose: request.verbose,
-        };
-        render::run(opts)?;
+            frames,
+            output: output.clone(),
+            verbose,
+        })?;
         match stdout.as_mut() {
-            Some(original) => original.print_line(&request.output.display().to_string())?,
-            None => println!("{}", request.output.display()),
+            Some(original) => original.print_line(&output.display().to_string())?,
+            None => println!("{}", output.display()),
         }
         Ok(())
     }
@@ -177,17 +129,106 @@ pub fn needs_capture_env(current: Option<&OsStr>) -> bool {
 /// An image the `image` crate, with the features this crate enables, can
 /// decode: it must carry one of those extensions and exist.
 fn validate_image(image: &Path) -> Result<()> {
-    if !render::ImageSource::accepts(image) {
+    image_file::validate(image, &render::ImageSource::EXTENSIONS, "this backend")
+}
+
+/// The `--core-options` file as a map, or no options at all.
+fn read_options(path: Option<&Path>) -> Result<HashMap<String, String>> {
+    match path {
+        Some(path) => {
+            let text = std::fs::read_to_string(path)
+                .with_context(|| format!("reading core options {}", path.display()))?;
+            Ok(config::read_all(&text))
+        }
+        None => Ok(HashMap::new()),
+    }
+}
+
+/// A core run once its request has been resolved against RetroArch's
+/// layout: the core to load, what to feed it, and how long to run it.
+struct CoreRun {
+    core_path: PathBuf,
+    rom: PathBuf,
+    state: Option<StateSource>,
+    options: HashMap<String, String>,
+    skip_extension_check: bool,
+    system_dir: PathBuf,
+    settle: f64,
+    advance: u32,
+    verbose: bool,
+}
+
+/// Open the core, check the ROM against it, find and decode the state,
+/// then boot: `init`, `load_game`, `restore`. Everything that can be
+/// refused is refused before `init`, so a bad slot or extension fails
+/// before the core has printed a line. Returns the running core and the
+/// number of warm-up frames to run before recording.
+fn boot_core(run: CoreRun, dirs: &mut DirResolver) -> Result<(CoreWithTemp, u32)> {
+    // Open the core before initialising it: a core may read its options
+    // as early as `retro_init`, so they travel in the Context.
+    let mut core = libretro::Core::open(&run.core_path)?;
+    let info = core.system_info();
+    if !run.skip_extension_check && !info.accepts_extension(&run.rom) {
         bail!(
-            "{} does not have an image extension this backend decodes ({})",
-            image.display(),
-            render::ImageSource::EXTENSIONS.join(", ")
+            "{} does not have an extension {} accepts ({}); pass --skip-extension-check to load it anyway",
+            run.rom.display(),
+            info.library_name,
+            info.valid_extensions.join(", ")
         );
     }
-    if !image.is_file() {
-        bail!("image not found at {}", image.display());
+    let state_path = match &run.state {
+        Some(StateSource::File(p)) => Some(p.clone()),
+        Some(StateSource::Slot(n)) => match dirs.locate(
+            "save state slot",
+            |d| state::slot_path(&d.states, &info.library_name, &run.rom, *n),
+            |p| p.is_file(),
+        ) {
+            Located::Found(p) => Some(p),
+            Located::Missing(tried) => {
+                bail!("slot {n} not found at {}", describe_tried(&tried))
+            }
+        },
+        None => None,
+    };
+    let mem = match &state_path {
+        Some(path) => {
+            let bytes =
+                std::fs::read(path).with_context(|| format!("reading state {}", path.display()))?;
+            Some(
+                state::decode(&bytes)
+                    .with_context(|| format!("decoding state {}", path.display()))?,
+            )
+        }
+        None => None,
+    };
+
+    let tmp = tempfile::Builder::new()
+        .prefix("ra-metal-capture-")
+        .tempdir()
+        .context("creating temp dir")?;
+    core.init(libretro::Context {
+        system_dir: run.system_dir,
+        save_dir: tmp.path().to_path_buf(),
+        options: run.options,
+    })?;
+    let av = core.load_game(&run.rom, &info)?;
+    if run.verbose {
+        eprintln!(
+            "core {} ({}x{} at {:.3} fps)",
+            info.library_name, av.base.width, av.base.height, av.fps
+        );
     }
-    Ok(())
+    let warmup = match (mem, state_path) {
+        (Some(mem), Some(path)) => {
+            core.restore(&mem)
+                .with_context(|| format!("restoring state {}", path.display()))?;
+            run.advance.saturating_sub(1)
+        }
+        _ => settle_frames(run.settle, av.fps),
+    };
+    // `tmp` must outlive the core (it is the core's save dir); it travels
+    // with the core so it lives until render::run returns.
+    Ok((CoreWithTemp { core, _tmp: tmp }, warmup))
 }
 
 /// A core plus the temp dir it was told to save into.
@@ -238,7 +279,6 @@ impl StdoutToStderr {
 mod tests {
     use super::*;
     use crate::config::WindowMode;
-    use std::path::PathBuf;
 
     fn request(source: Source, shader: &str) -> Request {
         Request {
@@ -248,7 +288,7 @@ mod tests {
             frames: 1,
             settle: 5.0,
             advance: 1,
-            output: PathBuf::from("/nonexistent-dir/x.gputrace"),
+            output: PathBuf::from("/tmp/x.gputrace"),
             config: None,
             verbose: false,
         }
@@ -293,15 +333,24 @@ mod tests {
     }
 
     #[test]
-    fn validate_image_checks_extension_then_existence() {
-        let err = validate_image(Path::new("Cargo.toml"))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("extension"), "{err}");
-        let err = validate_image(Path::new("/nonexistent/x.png"))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("not found"), "{err}");
+    fn hosted_image_list_is_the_image_crates_not_retroarchs() {
+        assert!(
+            validate_image(Path::new("Cargo.toml"))
+                .unwrap_err()
+                .to_string()
+                .contains("this backend")
+        );
+        assert!(render::ImageSource::accepts(Path::new("x.pam")));
+        assert!(!render::ImageSource::accepts(Path::new("x.psd")));
         validate_image(Path::new("fixtures/sample.png")).unwrap();
+    }
+
+    #[test]
+    fn read_options_is_empty_without_a_file_and_fails_on_a_missing_one() {
+        assert!(read_options(None).unwrap().is_empty());
+        let err = read_options(Some(Path::new("/nonexistent/x.opt")))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("core options"), "{err}");
     }
 }

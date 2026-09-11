@@ -104,11 +104,21 @@ cores, or Metal.
 `retroarch/mod.rs` assembles a `launch::LaunchPlan` plus a
 `runconfig::RunConfig`, renders the run config to a temp dir, builds a
 `launch::LaunchCommand`, and hands it to `capture::run` with a
-`capture::CaptureOptions`. `hosted/mod.rs` resolves the core and state through
-`layout`, drives `libretro::Core`, and hands a `render::FrameSource` to
-`render::run`. `bundle` (recognising and clearing a `.gputrace`) and
-`layout::DirResolver` (core, system directory, states, defaults first and
-`retroarch.cfg` only on a miss) are shared.
+`capture::CaptureOptions`. `hosted/mod.rs` resolves the request into a
+`CoreRun` through `layout`, and `boot_core` opens the core, checks the ROM
+and finds and decodes the state before `init`, then boots it and hands
+the `render::FrameSource` to `render::run`. `bundle` (recognising and
+clearing a `.gputrace`, checking the output directory exists),
+`image_file` (the `--image` check against a backend's extension list),
+and `layout::DirResolver` (core, system directory, states, defaults first
+and `retroarch.cfg` only on a miss) are shared.
+
+Ctrl-C: the RetroArch backend's handler kills the launched process and
+exits 130 itself. The hosted backend cannot do that, because Metal is
+writing the bundle and the `Trace` guard lives on the render thread, so
+`hosted::interrupt` only raises a flag, the frame loops poll it, and the
+run unwinds through its error path (stop capture, remove the partial
+bundle) returning `backend::Interrupted`, which `main` maps to exit 130.
 
 `capture::run` spawns RetroArch under a drop guard that SIGKILLs it on any
 failure path, polls `gpucapture list` until the pid is capturable, then
@@ -126,8 +136,8 @@ and checks `retro_api_version`; `Core::system_info` names the core, which is
 what picks its state directory, and libretro.h allows that call before
 `retro_init`; `Core::init` publishes the `Context` to the
 callbacks, installs them, and calls `retro_init`, so a core that reads its
-options that early sees the real values; and `Core::load_game` loads the ROM
-and returns `AvInfo`. Then `Core::restore` feeds a decoded state to
+options that early sees the real values; and `Core::load_game`, given that
+`SystemInfo`, loads the ROM and returns `AvInfo`. Then `Core::restore` feeds a decoded state to
 `retro_unserialize`, and `Core::run_frame` runs one `retro_run` and returns
 the `Frame` the core delivered. libretro's callbacks carry no user pointer,
 so everything they need lives in a process-wide static in `hosted/libretro/env.rs`,
@@ -161,7 +171,9 @@ off the main thread, which is what every test sees.
 
 Unit tests live inline and are deterministic: config rendering, argument
 parsing and conflicts, output sizing, the `gpucapture list` parser, and the
-UDP protocol against a fake on 127.0.0.1. `hosted::render` tests its sizing
+UDP protocol against a fake on 127.0.0.1. A test that restates its
+implementation (a wrapper compared with what it wraps) is not wanted; assert
+concrete values. `hosted::render` tests its sizing
 and image conversion; its render loop touches the GPU and has no unit
 tests by design.
 

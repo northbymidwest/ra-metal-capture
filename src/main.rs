@@ -6,11 +6,15 @@
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use ra_metal_capture::backend::{Backend, Request, Source, StateSource};
+use ra_metal_capture::backend::{Backend, Interrupted, Request, Source, StateSource};
 use ra_metal_capture::config::{self, Size, WindowMode};
 use ra_metal_capture::display;
 use ra_metal_capture::retroarch::RetroArch;
 use std::path::PathBuf;
+
+/// The most `--settle` accepts, in seconds. Above this the value is a
+/// mistake, not a wait: a hosted core would run a quarter million frames.
+const MAX_SETTLE: f64 = 3600.0;
 
 fn parse_settle(s: &str) -> std::result::Result<f64, String> {
     let v: f64 = s.parse().map_err(|_| format!("not a number: {s:?}"))?;
@@ -19,17 +23,22 @@ fn parse_settle(s: &str) -> std::result::Result<f64, String> {
             "settle must be a non-negative, finite number of seconds, got {s:?}"
         ));
     }
+    if v > MAX_SETTLE {
+        return Err(format!(
+            "settle must be at most {MAX_SETTLE} seconds, got {s:?}"
+        ));
+    }
     Ok(v)
 }
 
 /// Which backend a run uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 enum BackendChoice {
-    /// Launches RetroArch.app and records its presented frames with gpucapture
-    Retroarch,
     /// Renders a static image or a hosted libretro core through librashader
     /// in this process, recorded with MTLCaptureManager
     Librashader,
+    /// Launches RetroArch.app and records its presented frames with gpucapture
+    Retroarch,
 }
 
 /// The backend a run uses when `--backend` is not given: the in-process
@@ -46,8 +55,12 @@ const DEFAULT_BACKEND: BackendChoice = BackendChoice::Retroarch;
 #[derive(Parser, Debug)]
 #[command(version)]
 struct Cli {
+    /// Load the ROM even if its extension is not one the core declares
+    #[arg(long, requires = "core", help_heading = "librashader backend")]
+    skip_extension_check: bool,
+
     /// RetroArch .app bundle, or the binary inside it
-    /// (default /Applications/RetroArch.app)
+    /// [default: /Applications/RetroArch.app]
     #[arg(long, help_heading = "RetroArch backend")]
     app: Option<PathBuf>,
 
@@ -95,10 +108,6 @@ struct Cli {
     #[arg(long, requires = "core", conflicts_with = "image")]
     core_options: Option<PathBuf>,
 
-    /// Load the ROM even if its extension is not one the core declares
-    #[arg(long, requires = "core", help_heading = "librashader backend")]
-    skip_extension_check: bool,
-
     /// Shader preset (.slangp / .glslp) to render through
     #[arg(long)]
     shader: PathBuf,
@@ -142,7 +151,7 @@ struct Cli {
     advance: u32,
 
     /// UDP port for RetroArch's command interface, enabled only for this
-    /// run (default 55355)
+    /// run [default: 55355]
     #[arg(long, help_heading = "RetroArch backend")]
     cmd_port: Option<u16>,
 
@@ -290,7 +299,13 @@ fn hosted_backend() -> Result<Box<dyn Backend>> {
 fn main() -> Result<()> {
     let (backend, request) = build(Cli::parse())?;
     backend.prepare()?;
-    backend.run(request)
+    match backend.run(request) {
+        Err(e) if e.is::<Interrupted>() => {
+            eprintln!("interrupted");
+            std::process::exit(130);
+        }
+        result => result,
+    }
 }
 
 #[cfg(test)]
@@ -379,6 +394,9 @@ mod tests {
         assert!(err.contains("non-negative"), "{err}");
         assert!(parse_rom(&["--settle=nan"]).is_err());
         assert_eq!(parse_rom(&["--settle", "2.5"]).unwrap().settle, 2.5);
+        let err = parse_rom(&["--settle", "1e9"]).unwrap_err().to_string();
+        assert!(err.contains("at most"), "{err}");
+        assert_eq!(parse_rom(&["--settle", "3600"]).unwrap().settle, 3600.0);
     }
 
     #[test]

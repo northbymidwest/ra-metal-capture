@@ -6,36 +6,20 @@ Notable changes per release. Dates are the publish date.
 
 ### Added
 
-- `backend` module: `Request`, `Source`, `StateSource`, and the `Backend`
-  trait, the one interface both backends present to the binary.
+- `backend` module: `Request`, `Source`, `StateSource`, `Interrupted`, and
+  the `Backend` trait, the one interface both backends present to the
+  binary.
 - `retroarch::RetroArch` and `hosted::Hosted` (feature `librashader`), the
   two backends, holding everything that used to live in the binary.
 - `bundle` module: `is_gputrace_bundle` and `prepare_output`, shared by
-  both backends.
+  both backends; `image_file`, the `--image` check both backends run
+  against their own extension list.
 
 ### Changed
 
 - `--shader` is required for every run; the RetroArch backend always
   passes it as `--set-shader`, so a capture of whatever shader RetroArch
   had configured is no longer a thing this tool does.
-- The RetroArch backend launches RetroArch on a `retroarch.cfg` written
-  for the run (`-c`) instead of an appendconfig layered over the user's.
-  The file holds only what the run needs (the Vulkan driver, shaders on,
-  the window, the system directory, a per-run save directory, a per-run
-  core options file, the state slot when there is one); every other key
-  takes RetroArch's compiled default. Nothing in the user's config reaches
-  the run, so a RetroArch whose `video_driver` is not `vulkan` needs no
-  change, and per-core option files, config overrides, remaps, auto shader
-  presets, and the content history are all out of the picture. RetroArch
-  is launched with `--sram-mode noload-nosave` and a per-run save
-  directory, so it never reads or writes `.srm`/`.rtc` files; earlier
-  versions let RetroArch flush SRAM into the user's saves on exit, which
-  after a state load rewrote the game's `.srm` with the state's SRAM.
-- The run config turns off RetroArch's first-run asset-bundle extraction.
-  On a config that has never recorded one, RetroArch extracts its bundled
-  assets at startup and, a few seconds in, reinitialises every driver and
-  saves the config; under a paused capture that tore down the Vulkan
-  device and failed the run.
 - `--core-options` applies to both backends. Without it a core under
   RetroArch now runs on its built-in defaults, as a hosted core always
   did, instead of the per-core options RetroArch had saved.
@@ -43,47 +27,87 @@ Notable changes per release. Dates are the publish date.
   locating a bare core name, `--slot`, or the system directory when it is
   not in RetroArch's default place. `--slot N` under RetroArch resolves
   the states directory that way and lets RetroArch find the slot in it.
-- Breaking library API: `retroarch::appendconfig` is
-  `retroarch::runconfig`, `AppendConfig` is `RunConfig` and its `render`
-  returns a `Result`, `PausedConfig` carries a `StateDirs`,
-  `LaunchPlan.appendconfig` is `config`, and `LaunchPlan.shader` and
-  `Request.shader` are plain `PathBuf`s. `DirResolver` gained
-  `locate_layout`, `core`, and `system_dir`, which both backends use.
-- Breaking library API: the source tree is grouped by backend. `app`,
-  `capture`, `launch`, `remote`, and `image` are now `retroarch::app` and
-  so on; `AppendConfig`, `PausedConfig`, and `is_config_safe` moved from
-  `config` to `retroarch::appendconfig`; `render` and `libretro` are
-  `hosted::render` and `hosted::libretro`. `capture::prepare_output` and
-  `capture::is_gputrace_bundle` moved to `bundle`; `layout` is no longer
-  behind the `librashader` feature.
-- The binary only parses arguments, builds a `Request`, and picks a
-  backend. Behaviour is unchanged.
 - `Request.config` is an `Option`: `None` consults no `retroarch.cfg` at
   all, for a machine without RetroArch; the binary passes its default.
-- The RetroArch backend reads `retroarch.cfg` only when resolving a bare
-  core name, and only if the core is not in the default cores directory,
-  so image mode needs no config file.
-- The hosted backend validates `--image` against the formats the `image`
-  crate decodes rather than RetroArch's image-viewer list.
-- `--help` and `--backend`'s value descriptions lead with the in-process
-  backend.
+- An output path whose directory does not exist is refused before
+  anything is rendered or launched, naming the directory, instead of by
+  Metal or RetroArch at the end of the run.
+- `--settle` is capped at 3600 seconds; larger values were accepted and
+  saturated into billions of warm-up frames.
+- Ctrl-C (SIGINT or SIGTERM) ends either backend cleanly with exit status
+  130: the RetroArch backend kills the RetroArch it launched, the hosted
+  backend stops its capture between frames; both remove a partial bundle.
+  A free-running (settle) RetroArch capture is also bounded by a timeout,
+  after which RetroArch is killed to release gpucapture.
+- A capture that fails after writing part of a bundle removes it under
+  either backend, so the next run is not refused for a directory this
+  tool created.
+- `--help` lists the librashader backend's value and flag heading first,
+  and `--app` and `--cmd-port` show their defaults the way every other
+  flag does.
+- The binary only parses arguments, builds a `Request`, and picks a
+  backend. Behaviour is otherwise unchanged.
+- Breaking library API: the source tree is grouped by backend. `app`,
+  `capture`, `launch`, `remote`, and `image` are now `retroarch::app` and
+  so on; `render` and `libretro` are `hosted::render` and
+  `hosted::libretro`. `capture::prepare_output` and
+  `capture::is_gputrace_bundle` moved to `bundle`; `layout` is no longer
+  behind the `librashader` feature. `config::AppendConfig`,
+  `PausedConfig`, and `is_config_safe` became `retroarch::runconfig`'s
+  `RunConfig` (whose `render` returns a `Result`), `PausedConfig` (which
+  carries a `StateDirs`), and `is_config_safe`; `LaunchPlan.appendconfig`
+  is `config`, and `LaunchPlan.shader` and `Request.shader` are plain
+  `PathBuf`s. `DirResolver` gained `locate_layout`, `core`, and
+  `system_dir`, which both backends use. `config::read_keys` is gone;
+  `read_all` replaced its every use. `libretro::Core::load_game` takes the
+  `SystemInfo` the caller already fetched. `render::FrameSource::next`
+  lends a slice instead of returning a fresh `Vec` per frame;
+  `libretro::refuse_zip` is the one zip check. `AvInfo` lost its unused
+  `max` and `aspect_ratio`.
+
+#### RetroArch backend
+
+- RetroArch is launched on a `retroarch.cfg` written for the run (`-c`)
+  instead of an appendconfig layered over the user's. The file holds only
+  what the run needs (the Vulkan driver, shaders on, the window, the
+  system directory, a per-run save directory, a per-run core options
+  file, the state slot when there is one); every other key takes
+  RetroArch's compiled default. Nothing in the user's config reaches the
+  run, so a RetroArch whose `video_driver` is not `vulkan` needs no
+  change, and per-core option files, config overrides, remaps, auto shader
+  presets, and the content history are all out of the picture.
+- RetroArch is launched with `--sram-mode noload-nosave` and a per-run
+  save directory, so it never reads or writes `.srm`/`.rtc` files.
+  Earlier versions let RetroArch flush SRAM into the user's saves on
+  exit, which after a state load rewrote the game's `.srm` with the
+  state's SRAM.
+- The run config turns off RetroArch's first-run asset-bundle extraction.
+  On a config that has never recorded one, RetroArch extracts its bundled
+  assets at startup and, a few seconds in, reinitialises every driver and
+  saves the config; under a paused capture that tore down the Vulkan
+  device and failed the run.
+- Image mode needs no config file: `retroarch.cfg` is read only when a
+  bare core name is not in the default cores directory.
+
+#### Hosted backend
+
+- A missing `--slot`, a ROM of the wrong kind, and an unreadable state are
+  refused before the core boots, so the error is not buried in the core's
+  own output.
+- `--image` is validated against the formats the `image` crate decodes
+  rather than RetroArch's image-viewer list.
 - An output size above Metal's 16384-pixel limit is an error naming the
   limit instead of an assertion failure inside Metal.
-- A capture that fails after writing part of a bundle removes it, so the
-  next run is not refused for a directory this tool created.
-- Ctrl-C (SIGINT or SIGTERM) kills the RetroArch this tool launched
-  before exiting; a free-running (settle) capture is also bounded by a
-  timeout, after which RetroArch is killed to release gpucapture.
-- The default fill size for the in-process backend uses the whole visible
-  display area; only the RetroArch window subtracts the title bar.
-- `render::FrameSource::next` lends a slice instead of returning a fresh
-  `Vec` per frame; `libretro::refuse_zip` is the one zip check.
+- The default fill size uses the whole visible display area; only the
+  RetroArch window subtracts the title bar.
 - An rzip state container with a version other than 1 is refused by
   version rather than parsed as version 1.
 - A core option whose value contains a NUL byte is reported on stderr
   when dropped.
 - A core that sets `need_fullpath` is handed the ROM path with no buffer,
-  as RetroArch does. `AvInfo` lost its unused `max` and `aspect_ratio`.
+  as RetroArch does.
+- A library caller passing `advance: 0` gets no warm-up frames instead of
+  an integer underflow.
 
 ## 0.4.0 - 2026-09-11
 

@@ -37,14 +37,6 @@ pub fn read_all(text: &str) -> HashMap<String, String> {
     out
 }
 
-/// The named keys from RetroArch `key = "value"` config text.
-/// Missing keys are simply absent from the map.
-pub fn read_keys(text: &str, keys: &[&str]) -> HashMap<String, String> {
-    let mut all = read_all(text);
-    all.retain(|k, _| keys.contains(&k.as_str()));
-    all
-}
-
 /// A width and height: points for a RetroArch window, pixels for the
 /// hosted backend's output texture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,30 +95,18 @@ mod tests {
     }
 
     #[test]
-    fn reads_quoted_values() {
-        let text = "video_driver = \"vulkan\"\nlibretro_directory = \"~/cores\"\n";
-        let m = read_keys(text, &["libretro_directory", "video_driver"]);
+    fn reads_quoted_values_and_skips_comments_and_blank_lines() {
+        let text = "# comment\n\nvideo_driver = \"vulkan\"\nlibretro_directory = \"~/cores\"\n";
+        let m = read_all(text);
+        assert_eq!(m.len(), 2);
         assert_eq!(m["libretro_directory"], "~/cores");
         assert_eq!(m["video_driver"], "vulkan");
-    }
-
-    #[test]
-    fn skips_comments_blank_lines_and_unrequested_keys() {
-        let text = "# comment\n\nfoo = \"1\"\nbar = \"2\"\n";
-        let m = read_keys(text, &["bar"]);
-        assert_eq!(m.len(), 1);
-        assert_eq!(m["bar"], "2");
-    }
-
-    #[test]
-    fn missing_key_is_absent() {
-        let m = read_keys("a = \"1\"\n", &["b"]);
-        assert!(!m.contains_key("b"));
+        assert!(!m.contains_key("missing"));
     }
 
     #[test]
     fn tolerates_unquoted_values_and_extra_whitespace() {
-        let m = read_keys("  x   =   3  \n", &["x"]);
+        let m = read_all("  x   =   3  \n");
         assert_eq!(m["x"], "3");
     }
 

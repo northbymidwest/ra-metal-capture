@@ -313,14 +313,16 @@ impl Core {
     }
 
     /// `retro_load_game` with the ROM's bytes and path, then the AV info.
-    pub fn load_game(&mut self, rom: &Path) -> Result<AvInfo> {
+    /// `info` is this core's [`Core::system_info`], which the caller has
+    /// already fetched; it decides whether the core wants the bytes.
+    pub fn load_game(&mut self, rom: &Path, info: &SystemInfo) -> Result<AvInfo> {
         if !self.initialised {
             bail!("the core is not initialised (init must run before load_game)");
         }
         refuse_zip(rom)?;
         // A core that sets need_fullpath opens the content itself and is
         // handed no buffer, as RetroArch does; the rest get the bytes.
-        let bytes = if self.system_info().need_fullpath {
+        let bytes = if info.need_fullpath {
             Vec::new()
         } else {
             std::fs::read(rom).with_context(|| format!("reading {}", rom.display()))?

@@ -60,7 +60,7 @@ impl Backend for RetroArch {
                 skip_extension_check,
             } => {
                 if *skip_extension_check {
-                    bail!("the extension check is not part of the RetroArch backend");
+                    bail!("--skip-extension-check only applies to the librashader backend");
                 }
                 if !rom.is_file() {
                     bail!("ROM not found at {}", rom.display());
@@ -237,7 +237,7 @@ mod tests {
             }))
             .unwrap_err()
             .to_string();
-        assert!(err.contains("extension check"), "{err}");
+        assert!(err.contains("--skip-extension-check"), "{err}");
     }
 
     #[test]

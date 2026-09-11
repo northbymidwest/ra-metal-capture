@@ -14,9 +14,17 @@ pub fn is_gputrace_bundle(path: &Path) -> bool {
 
 /// Make room for a new capture at `output`. A previous bundle is removed;
 /// anything else that exists there is refused, so a mistyped path never
-/// deletes user data.
+/// deletes user data. A path in a directory that does not exist is
+/// refused here, before anything is rendered, rather than by Metal at the
+/// end of the run.
 pub fn prepare_output(output: &Path) -> Result<()> {
     if !output.exists() {
+        if let Some(dir) = output.parent()
+            && !dir.as_os_str().is_empty()
+            && !dir.is_dir()
+        {
+            bail!("output directory {} does not exist", dir.display());
+        }
         return Ok(());
     }
     if !is_gputrace_bundle(output) {
@@ -88,6 +96,16 @@ mod tests {
             "a directory without the suffix is left alone"
         );
         discard_partial(&tmp.path().join("absent.gputrace"));
+    }
+
+    #[test]
+    fn prepare_output_refuses_a_missing_parent_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tmp.path().join("missing").join("x.gputrace");
+        let err = prepare_output(&out).unwrap_err().to_string();
+        assert!(err.contains("output directory"), "{err}");
+        assert!(err.contains("missing"), "{err}");
+        prepare_output(Path::new("relative.gputrace")).unwrap();
     }
 
     #[test]

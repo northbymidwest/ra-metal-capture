@@ -16,6 +16,7 @@
 mod trace;
 pub use trace::{CAPTURE_ENV, Trace};
 
+use super::interrupt;
 use crate::bundle::discard_partial;
 use crate::config::{Size, WindowMode};
 use crate::display::Screen;
@@ -91,9 +92,7 @@ impl ImageSource {
     /// Whether `path` has an extension in [`ImageSource::EXTENSIONS`],
     /// case-insensitively.
     pub fn accepts(path: &Path) -> bool {
-        path.extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| Self::EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+        crate::image_file::has_extension(path, &Self::EXTENSIONS)
     }
 
     /// Take an image already in memory, converting RGBA8 to BGRA8.
@@ -242,23 +241,32 @@ pub fn run(mut opts: RenderOptions) -> Result<()> {
         Ok(())
     };
 
+    // Both phases: a frame per call, the count running on across them.
+    // Ctrl-C is polled between frames (see `interrupt`).
     let mut count = 0usize;
+    let mut render_frames = |n: u32| -> Result<()> {
+        for _ in 0..n {
+            interrupt::check()?;
+            upload(opts.source.next()?)?;
+            render_one(count)?;
+            count += 1;
+        }
+        Ok(())
+    };
     if opts.warmup >= WARMUP_PROGRESS_THRESHOLD {
         eprintln!(
             "rendering {} warm-up frame(s) before the capture starts",
             opts.warmup
         );
     }
-    for _ in 0..opts.warmup {
-        upload(opts.source.next()?)?;
-        render_one(count)?;
-        count += 1;
-    }
+    render_frames(opts.warmup)?;
     let trace = Trace::start(&device, &opts.output)?;
-    for _ in 0..opts.frames {
-        upload(opts.source.next()?)?;
-        render_one(count)?;
-        count += 1;
+    if let Err(e) = render_frames(opts.frames) {
+        // Stop Metal writing before removing what it wrote, so the next
+        // run to this path is not refused for a bundle we left behind.
+        drop(trace);
+        discard_partial(&opts.output);
+        return Err(e);
     }
     trace.finish();
 

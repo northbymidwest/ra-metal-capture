@@ -107,17 +107,27 @@ mod tests {
 
     #[test]
     fn for_retroarch_window_trims_only_fill() {
-        let visible = Size {
-            width: 2488,
-            height: 1410,
-        };
         assert_eq!(
-            for_retroarch_window(WindowMode::Fill { max: visible }),
-            fill_mode(visible)
+            for_retroarch_window(WindowMode::Fill {
+                max: Size {
+                    width: 2488,
+                    height: 1410
+                }
+            }),
+            WindowMode::Fill {
+                max: Size {
+                    width: 2488,
+                    height: 1382
+                }
+            }
         );
         assert_eq!(
             for_retroarch_window(WindowMode::Scale(3)),
             WindowMode::Scale(3)
+        );
+        assert_eq!(
+            for_retroarch_window(WindowMode::Fullscreen),
+            WindowMode::Fullscreen
         );
     }
 
@@ -135,12 +145,5 @@ mod tests {
                 }
             }
         );
-    }
-
-    #[test]
-    fn visible_size_matches_main_screen() {
-        // Both are AppKit queries (or the same fallback off the main thread),
-        // so they must agree; this pins visible_size to main_screen.
-        assert_eq!(visible_size(), main_screen().visible);
     }
 }

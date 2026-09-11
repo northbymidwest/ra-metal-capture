@@ -59,6 +59,21 @@ pub struct Request {
     pub verbose: bool,
 }
 
+/// The error a backend returns when Ctrl-C ended the run. By the time it
+/// is returned the backend has cleaned up (stopped its capture, removed a
+/// partial bundle, killed a launched process); the binary maps it to exit
+/// status 130.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Interrupted;
+
+impl std::fmt::Display for Interrupted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("interrupted")
+    }
+}
+
+impl std::error::Error for Interrupted {}
+
 /// A way of turning a [`Request`] into a `.gputrace`.
 pub trait Backend {
     /// Anything that must happen before the process touches the platform,
