@@ -15,8 +15,8 @@ use std::process::{Child, Command, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-/// PIDs listed by `gpucapture list`. The first line is a header; each
-/// following line starts with the PID.
+/// PIDs listed by `gpucapture list`: every line whose first word parses
+/// as a number. The header line's first word is `PID`, which does not.
 pub fn parse_capturable_pids(list_output: &str) -> Vec<u32> {
     list_output
         .lines()

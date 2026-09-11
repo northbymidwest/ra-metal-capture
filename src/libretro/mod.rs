@@ -74,6 +74,8 @@ pub struct Core {
     /// The base geometry from `load_game`'s `AvInfo`, zero before a game is
     /// loaded. `run_frame` requires every frame to match this size.
     base: Size,
+    /// The most recent frame, lent out by `FrameSource::next`.
+    last_frame: Vec<u8>,
 }
 
 /// Resolve every `retro_*` symbol into a `CoreAPI`.
@@ -144,8 +146,29 @@ fn cstring(path: &Path) -> Result<CString> {
 fn options_to_cstring(options: HashMap<String, String>) -> HashMap<String, CString> {
     options
         .into_iter()
-        .filter_map(|(k, v)| CString::new(v).ok().map(|v| (k, v)))
+        .filter_map(|(k, v)| match CString::new(v) {
+            Ok(v) => Some((k, v)),
+            Err(_) => {
+                eprintln!("warning: core option {k} contains a NUL byte and was dropped");
+                None
+            }
+        })
         .collect()
+}
+
+/// A zipped ROM is refused up front: RetroArch extracts archives itself,
+/// this backend does not, and a core handed a zip would misread it.
+pub fn refuse_zip(rom: &Path) -> Result<()> {
+    if rom
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
+    {
+        bail!(
+            "{} is a zip; this backend takes the extracted ROM (RetroArch extracts archives itself)",
+            rom.display()
+        );
+    }
+    Ok(())
 }
 
 impl Core {
@@ -207,6 +230,7 @@ impl Core {
                 width: 0,
                 height: 0,
             },
+            last_frame: Vec::new(),
         })
     }
 
@@ -293,15 +317,7 @@ impl Core {
         if !self.initialised {
             bail!("the core is not initialised (init must run before load_game)");
         }
-        if rom
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
-        {
-            bail!(
-                "{} is a zip; this backend takes the extracted ROM (RetroArch extracts archives itself)",
-                rom.display()
-            );
-        }
+        refuse_zip(rom)?;
         // A core that sets need_fullpath opens the content itself and is
         // handed no buffer, as RetroArch does; the rest get the bytes.
         let bytes = if self.system_info().need_fullpath {
@@ -437,7 +453,7 @@ impl crate::render::FrameSource for Core {
     fn size(&self) -> Size {
         self.size()
     }
-    fn next(&mut self) -> Result<Vec<u8>> {
+    fn next(&mut self) -> Result<&[u8]> {
         let frame = self.run_frame()?;
         if frame.size != self.base {
             bail!(
@@ -448,7 +464,8 @@ impl crate::render::FrameSource for Core {
                 self.base.height
             );
         }
-        Ok(frame.bgra)
+        self.last_frame = frame.bgra;
+        Ok(&self.last_frame)
     }
 }
 

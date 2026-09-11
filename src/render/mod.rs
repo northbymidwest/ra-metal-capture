@@ -70,8 +70,9 @@ pub trait FrameSource {
     /// Size of every frame this source yields.
     fn size(&self) -> Size;
     /// The next frame as tightly packed BGRA8 rows, top row first,
-    /// exactly `size().width * size().height * 4` bytes.
-    fn next(&mut self) -> Result<Vec<u8>>;
+    /// exactly `size().width * size().height * 4` bytes, valid until the
+    /// next call.
+    fn next(&mut self) -> Result<&[u8]>;
 }
 
 /// A static image, decoded once.
@@ -121,8 +122,8 @@ impl FrameSource for ImageSource {
     fn size(&self) -> Size {
         self.size
     }
-    fn next(&mut self) -> Result<Vec<u8>> {
-        Ok(self.bgra.clone())
+    fn next(&mut self) -> Result<&[u8]> {
+        Ok(&self.bgra)
     }
 }
 
@@ -249,13 +250,13 @@ pub fn run(mut opts: RenderOptions) -> Result<()> {
         );
     }
     for _ in 0..opts.warmup {
-        upload(&opts.source.next()?)?;
+        upload(opts.source.next()?)?;
         render_one(count)?;
         count += 1;
     }
     let trace = Trace::start(&device, &opts.output)?;
     for _ in 0..opts.frames {
-        upload(&opts.source.next()?)?;
+        upload(opts.source.next()?)?;
         render_one(count)?;
         count += 1;
     }
@@ -360,7 +361,7 @@ mod tests {
                 height: 1
             }
         );
-        let a = src.next().unwrap();
+        let a = src.next().unwrap().to_vec();
         assert_eq!(a, [0, 0, 255, 255, 255, 0, 0, 255]);
         assert_eq!(src.next().unwrap(), a);
     }

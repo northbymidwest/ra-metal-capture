@@ -62,11 +62,18 @@ pub fn slot_path(dirs: &StateDirs, core_name: &str, rom: &Path, slot: u32) -> Pa
 }
 
 /// Unwrap a RetroArch state file to the bytes `retro_unserialize` takes.
-/// Handles the `#RZIPv1#` chunked-zlib container, the `RASTATE1` block
-/// container, both together, or neither (old files are raw core data).
+/// Handles the `#RZIPv` + version + `#` chunked-zlib container (version 1
+/// only), the `RASTATE` + version block container, both together, or
+/// neither (old files are raw core data).
 #[cfg(feature = "librashader")]
 pub fn decode(bytes: &[u8]) -> Result<Vec<u8>> {
     let plain = if bytes.len() >= 20 && &bytes[..6] == b"#RZIPv" && bytes[7] == b'#' {
+        if bytes[6] != 1 {
+            bail!(
+                "rzip container version {} is not supported (only 1)",
+                bytes[6]
+            );
+        }
         unrzip(bytes)?
     } else {
         bytes.to_vec()

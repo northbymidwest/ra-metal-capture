@@ -16,6 +16,11 @@ fn expand6(v: u16) -> u8 {
 /// `width * height * 4` bytes of BGRA8 from `height` rows of `pitch` bytes.
 /// XRGB8888 rows are copied with the X byte forced opaque; the 16-bit
 /// formats expand each channel by bit replication.
+///
+/// # Panics
+///
+/// If `data` is shorter than `(height - 1) * pitch + width * bpp` bytes or
+/// `width * bpp` exceeds `pitch`; the video callback checks both first.
 pub fn to_bgra(format: PixelFormat, data: &[u8], width: u32, height: u32, pitch: usize) -> Vec<u8> {
     let (w, h) = (width as usize, height as usize);
     let mut out = Vec::with_capacity(w * h * 4);

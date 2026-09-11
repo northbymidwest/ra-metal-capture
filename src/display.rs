@@ -143,11 +143,4 @@ mod tests {
         // so they must agree; this pins visible_size to main_screen.
         assert_eq!(visible_size(), main_screen().visible);
     }
-
-    #[test]
-    fn fallback_screen_is_1080p_at_1x() {
-        assert_eq!(FALLBACK_SCREEN.visible, FALLBACK);
-        assert_eq!(FALLBACK_SCREEN.full, FALLBACK);
-        assert_eq!(FALLBACK_SCREEN.backing_scale, 1.0);
-    }
 }

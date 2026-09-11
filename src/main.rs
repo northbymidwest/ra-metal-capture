@@ -12,10 +12,6 @@ use ra_metal_capture::display;
 use ra_metal_capture::retroarch::RetroArch;
 use std::path::PathBuf;
 
-fn default_config() -> PathBuf {
-    config::expand_tilde("~/Library/Application Support/RetroArch/config/retroarch.cfg")
-}
-
 fn parse_settle(s: &str) -> std::result::Result<f64, String> {
     let v: f64 = s.parse().map_err(|_| format!("not a number: {s:?}"))?;
     if !v.is_finite() || v < 0.0 {
@@ -115,7 +111,10 @@ struct Cli {
 
     /// retroarch.cfg: read only when a default RetroArch path is missing
     /// (librashader), or as the base config for the run (retroarch)
-    #[arg(long, default_value_os_t = default_config())]
+    #[arg(
+        long,
+        default_value = "~/Library/Application Support/RetroArch/config/retroarch.cfg"
+    )]
     config: PathBuf,
 
     /// Exact output size in pixels (librashader) or window size in points
@@ -277,7 +276,7 @@ fn build(cli: Cli) -> Result<(Box<dyn Backend>, Request)> {
         settle: cli.settle,
         advance: cli.advance,
         output,
-        config: Some(cli.config.clone()),
+        config: Some(config::expand_tilde(&cli.config.to_string_lossy())),
         verbose: cli.verbose,
     };
     Ok((backend, request))
@@ -539,6 +538,15 @@ mod tests {
         );
         assert_eq!(request.frames, 2);
         assert!(request.output.is_absolute());
+    }
+
+    #[test]
+    fn build_expands_the_config_tilde() {
+        let cli = parse_rom(&["--backend", "retroarch", "--config", "~/x/retroarch.cfg"]).unwrap();
+        let (_, request) = build(cli).unwrap();
+        let cfg = request.config.unwrap();
+        assert!(!cfg.starts_with("~"), "{}", cfg.display());
+        assert!(cfg.ends_with("x/retroarch.cfg"));
     }
 
     #[test]

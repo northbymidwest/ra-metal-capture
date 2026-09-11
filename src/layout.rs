@@ -152,8 +152,6 @@ pub fn describe_tried(tried: &[PathBuf]) -> String {
         .join(" or ")
 }
 
-/// Warm-up frames for a settle of `settle` seconds at `fps`, with 60 fps
-/// substituted when a core reports none (RetroArch's own fallback).
 /// Warm-up frames for `--settle` seconds at the core's own frame rate. A
 /// core that reports no frame rate is run at 60 fps, RetroArch's fallback,
 /// so the settle is a wait rather than nothing.

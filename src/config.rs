@@ -44,7 +44,8 @@ pub fn read_keys(text: &str, keys: &[&str]) -> HashMap<String, String> {
     all
 }
 
-/// A width and height in points.
+/// A width and height: points for a RetroArch window, pixels for the
+/// hosted backend's output texture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Size {
     pub width: u32,
@@ -76,7 +77,8 @@ pub fn is_config_safe(path: &Path) -> bool {
     !s.contains('"') && !s.contains('\n') && !s.contains('\r')
 }
 
-/// How the RetroArch window is sized for the run.
+/// How the output is sized: RetroArch's window, or the hosted backend's
+/// texture (see `render::output_size` for the pixel mapping).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WindowMode {
     /// Windowed, scaled up and then clamped to this maximum (points).

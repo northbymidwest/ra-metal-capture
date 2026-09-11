@@ -65,15 +65,7 @@ impl Backend for Hosted {
                 options,
                 skip_extension_check,
             } => {
-                if rom
-                    .extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
-                {
-                    bail!(
-                        "{} is a zip; this backend takes the extracted ROM (RetroArch extracts archives itself)",
-                        rom.display()
-                    );
-                }
+                libretro::refuse_zip(rom)?;
                 if !rom.is_file() {
                     bail!("ROM not found at {}", rom.display());
                 }
@@ -106,7 +98,11 @@ impl Backend for Hosted {
                         Located::Found(dir) => dir,
                         // Nothing exists anywhere; the core gets the default path
                         // and will say so itself if it needs a file from it.
-                        Located::Missing(tried) => tried.into_iter().next().unwrap_or_default(),
+                        // `tried` always starts with the default candidate.
+                        Located::Missing(tried) => match tried.first() {
+                            Some(default) => default.clone(),
+                            None => crate::layout::RetroArchDirs::defaults().system_dir,
+                        },
                     };
                 let tmp = tempfile::Builder::new()
                     .prefix("ra-metal-capture-")
@@ -227,7 +223,7 @@ impl render::FrameSource for CoreWithTemp {
     fn size(&self) -> Size {
         self.core.size()
     }
-    fn next(&mut self) -> Result<Vec<u8>> {
+    fn next(&mut self) -> Result<&[u8]> {
         self.core.next()
     }
 }

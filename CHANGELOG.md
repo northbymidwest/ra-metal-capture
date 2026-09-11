@@ -38,6 +38,12 @@ Notable changes per release. Dates are the publish date.
   timeout, after which RetroArch is killed to release gpucapture.
 - The default fill size for the in-process backend uses the whole visible
   display area; only the RetroArch window subtracts the title bar.
+- `render::FrameSource::next` lends a slice instead of returning a fresh
+  `Vec` per frame; `libretro::refuse_zip` is the one zip check.
+- An rzip state container with a version other than 1 is refused by
+  version rather than parsed as version 1.
+- A core option whose value contains a NUL byte is reported on stderr
+  when dropped.
 - A core that sets `need_fullpath` is handed the ROM path with no buffer,
   as RetroArch does. `AvInfo` lost its unused `max` and `aspect_ratio`.
 
