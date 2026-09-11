@@ -155,7 +155,8 @@ impl Core {
             .with_context(|| format!("loading core {}", dylib.display()))?;
         // SAFETY: `lib` was just dlopened from the path the caller named as
         // a libretro core, which is `resolve`'s requirement.
-        let api = unsafe { resolve(&lib) }?;
+        let api = unsafe { resolve(&lib) }
+            .with_context(|| format!("reading the libretro API of {}", dylib.display()))?;
         // SAFETY: the libretro contract: every callback is set before
         // retro_init, each with the signature libretro.h declares for it,
         // and each points at a function in `env` that cannot unwind. `api`
@@ -290,7 +291,9 @@ impl Core {
     }
 
     /// Run one emulated frame and return what the core drew. On a dupe the
-    /// previous frame is returned; before any frame has arrived it is an error.
+    /// previous frame is returned again. It is an error before any frame has
+    /// arrived, and also on a dupe that follows a frame `video_refresh`
+    /// rejected for inconsistent geometry, since that clears the stored one.
     pub fn run_frame(&mut self) -> Result<Frame> {
         // SAFETY: libretro.h allows this call once a game is loaded, and
         // every callback it reaches is one of `env`'s, which copy what they

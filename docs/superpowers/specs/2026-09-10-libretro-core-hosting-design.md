@@ -167,7 +167,7 @@ showed a software core needs:
 | `GET_SYSTEM_DIRECTORY`, `GET_SAVE_DIRECTORY` | the Context paths |
 | `SET_PIXEL_FORMAT` | record it; `true` for the three formats `pixels` converts |
 | `SET_VARIABLES`, `SET_CORE_OPTIONS*` | `true` (accepted, values come from the options map) |
-| `GET_VARIABLE` | value from the options map, `true`; else null value, `false` (RetroArch's behaviour) |
+| `GET_VARIABLE` | value from the options map when known, else a null value; `true` either way, and `true` on a null pointer too, which is what RetroArch does (runloop.c) |
 | `GET_VARIABLE_UPDATE` | `false` |
 | `SET_HW_RENDER` | `false`, and a flag the loader turns into a clear error if `retro_load_game` then fails |
 | everything else | `false` |

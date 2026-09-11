@@ -96,8 +96,10 @@ pub unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
         return true;
     }
     if data.is_null() {
-        // Every remaining command answered below reads or writes `data`.
-        return false;
+        // A null `retro_variable*` is a core probing whether this frontend
+        // supports core options at all, which RetroArch answers `true`
+        // (runloop.c). Every other command below reads or writes `data`.
+        return cmd == ENVIRONMENT_GET_VARIABLE;
     }
     let mut s = shared();
     // SAFETY: the caller guarantees `data` is the type libretro.h documents
@@ -135,21 +137,21 @@ pub unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
                 true
             }
             ENVIRONMENT_GET_VARIABLE => {
+                // RetroArch answers every query `true` and says "no such
+                // option" only by leaving the value null (runloop.c), so
+                // that a core can tell a frontend without core-option
+                // support from one that simply has no value to give.
+                // A null key asks for the whole environment string, which
+                // this frontend does not build, so it gets a null value too.
                 let var = &mut *(data as *mut Variable);
-                if var.key.is_null() {
-                    return false;
-                }
-                let key = CStr::from_ptr(var.key).to_string_lossy();
-                match s.options.get(key.as_ref()) {
-                    Some(v) => {
+                var.value = std::ptr::null();
+                if !var.key.is_null() {
+                    let key = CStr::from_ptr(var.key).to_string_lossy();
+                    if let Some(v) = s.options.get(key.as_ref()) {
                         var.value = v.as_ptr();
-                        true
-                    }
-                    None => {
-                        var.value = std::ptr::null();
-                        false
                     }
                 }
+                true
             }
             ENVIRONMENT_GET_VARIABLE_UPDATE => {
                 *(data as *mut bool) = false;
