@@ -2,6 +2,30 @@
 
 Notable changes per release. Dates are the publish date.
 
+## Unreleased
+
+### Added
+
+- `--backend librashader`: render `--image` through the shader preset
+  inside this process with the librashader crate's Metal runtime and write
+  the `.gputrace` with Metal's `MTLCaptureManager`. RetroArch is not
+  launched. Requires `--shader`; `--frames N` records N successive frames
+  with the frame count advancing. Behind the `librashader` Cargo feature,
+  on by default; `--no-default-features` gives the RetroArch-only build.
+- `display::Screen` and `display::main_screen()`: the main display's full
+  frame and backing scale alongside the visible frame.
+- `render` module (feature `librashader`): `RenderOptions`, `run`,
+  `output_size`, `Trace`, `CAPTURE_ENV`.
+
+### Changed
+
+- `capture::prepare_output` and `capture::is_gputrace_bundle` are now
+  public.
+- Dependency policy: `deny.toml` allows MPL-2.0 and BSD-3-Clause for the
+  librashader tree and warns rather than fails on duplicate crate versions.
+- docs.rs documents the crate without default features, since the
+  librashader tree's C++ does not cross-build there.
+
 ## 0.2.0 - 2026-09-10
 
 ### Added

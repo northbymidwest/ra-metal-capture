@@ -32,6 +32,10 @@ viewer, in place of an emulator core and ROM; see [Image mode](#image-mode).
   on macOS). The tool has been run against the release, nightly, and debug
   builds.
 - Rust 1.98 or newer to build.
+- The default build compiles librashader and its C++ dependencies (glslang,
+  SPIRV-Cross) from source, about 30 s on an M-series Mac for a clean
+  build. `cargo install --path . --no-default-features` skips them and
+  gives a RetroArch-only tool without `--backend librashader`.
 
 ## Install
 
@@ -69,18 +73,30 @@ other accepted image format) works in its place. `--image` replaces
 `--core` and `--rom` with a file loaded through RetroArch's built-in image
 viewer; see [Image mode](#image-mode) below.
 
+The same image can be rendered without RetroArch at all, through the
+librashader crate's Metal runtime inside this process:
+
+```
+ra-metal-capture \
+  --image sample.png \
+  --shader "$HOME/Library/Application Support/RetroArch/shaders/vectorscale/vectorscale.slangp" \
+  --backend librashader \
+  --output /tmp/sample-vectorscale-ls.gputrace
+```
+
 | flag | meaning |
 |---|---|
 | `--app PATH` | `.app` bundle or its binary. Default `/Applications/RetroArch.app`. |
 | `--core CORE` | `.dylib` path, or a bare name resolved in `libretro_directory` (`sameboy` finds `sameboy_libretro.dylib`). |
 | `--rom PATH` | content to load |
 | `--image FILE` | static image via RetroArch's image viewer; replaces `--core` and `--rom`; incompatible with `--state`, `--slot`, `--advance` |
+| `--backend NAME` | renderer for `--image`: `retroarch` (default) or `librashader`; requires `--image`; `librashader` requires `--shader` and ignores `--app`, `--config`, `--settle`, `--cmd-port`, `--keep-running` |
 | `--output PATH` | output `.gputrace` path (required) |
 | `--state FILE` | save state to load; copied to a temp states dir as slot 0 |
 | `--slot N` | load slot N from your real states dir instead |
 | `--shader PRESET` | `.slangp` / `.glslp` passed via `--set-shader` |
 | `--config PATH` | `retroarch.cfg` to base the run on; default `~/Library/Application Support/RetroArch/config/retroarch.cfg` |
-| `--size WxH` | exact window size in points |
+| `--size WxH` | exact window size in points (RetroArch) or output size in pixels (librashader) |
 | `--scale N` | integer scale of the core's native resolution |
 | `--fullscreen` | launch with `-f` |
 | `--settle SECS` | wait before capturing when no state is given (default 5) |
@@ -149,10 +165,35 @@ Verified 2026-09-10: `--image sample.png` (160x144) with
 in `builtin_imageviewer_enable = "true"` and no `-L` on the command line.
 `sample.png` is committed as the fixture used.
 
+### Backends
+
+`--backend librashader` renders the image through the same preset with the
+[librashader](https://github.com/SnowflakePowered/librashader) crate's Metal
+runtime, inside this process, and writes the trace with Metal's
+`MTLCaptureManager` instead of `gpucapture`. RetroArch is not launched.
+The tool re-executes itself once with `MTL_CAPTURE_ENABLED=1` so Metal
+offers programmatic capture. `--frames N` renders N successive frames with
+librashader's frame count advancing, so frame-count and history passes see
+real prior frames, unlike the frozen image viewer. Nothing is presented to
+a window, so Xcode shows the trace as a single frame holding N command
+buffers, one per rendered frame.
+
+Sizing is in pixels: `--size` is taken as pixels, `--scale N` is N times
+the image, `--fullscreen` is the main display's full pixel size, and the
+default fits the image into the visible area at the display's backing
+scale, aspect preserved, matching RetroArch's fill mode. RetroArch and
+librashader are different implementations of the preset format; the
+librashader trace is of librashader's rendering, not a pixel-exact stand-in
+for RetroArch's.
+
+Verified 2026-09-10: `--image sample.png --backend librashader --frames 2`
+with `vectorscale.slangp` produced a 34M bundle in 1.8 s at 3071x2764 px.
+
 ## Development
 
 ```
-cargo test          # no RetroArch, Xcode, or GPU needed
+cargo test                          # no RetroArch, Xcode, or GPU needed
+cargo test --no-default-features    # the RetroArch-only shape
 ```
 
 Pre-commit rustfmt hook: `git config core.hooksPath .githooks`. The
@@ -177,3 +218,10 @@ implementations, open-source projects, etc.). No audit has been conducted to
 identify such instances, as this is a personal side project. Any such code
 fragments remain subject to the licenses of their original creators. Use at
 your own discretion.
+
+### librashader
+
+The default build links the librashader crates, which are MPL-2.0. MPL is
+file-scoped: it covers those crates' own source, which is on crates.io,
+and places no terms on this crate or on binaries built from it beyond
+that. `--no-default-features` builds without them.

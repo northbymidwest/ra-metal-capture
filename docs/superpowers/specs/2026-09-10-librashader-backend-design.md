@@ -110,7 +110,9 @@ Metal runtime enabled its tree resolves to 159 packages and builds glslang
 and SPIRV-Cross from C++ source through `cc`, which needs the Xcode command
 line tools that any machine with `gpucapture` already has. Measured
 2026-09-10 in a scratch project on an M-series Mac: a clean build of that
-tree takes 25.6 s wall, 159 s CPU.
+tree takes 25.6 s wall, 159 s CPU; re-measured the same day as a clean
+build of this crate, it is 29.7 s wall, 195 s CPU, which is the figure the
+README quotes.
 
 Why on by default: the user of this tool wants both backends from one
 `cargo install`. `--no-default-features` gives the RetroArch-only build for
@@ -385,7 +387,9 @@ confined to `src/render/`.
   to have the same `index` entry `gpucapture` writes, which is what
   `is_gputrace_bundle` and the post-capture check look for. Verified by the
   first real run; if it differs, the check is adjusted to whatever the
-  document destination actually writes.
+  document destination actually writes. Settled 2026-09-10: the first real
+  run wrote a flat directory holding `index`, `metadata`, `capture`, and
+  the resource blobs, so `is_gputrace_bundle` accepted it unchanged.
 - **Re-exec and `cargo run`.** `current_exe()` under `cargo run` is the
   target binary, so the re-exec works there too, but any wrapper that
   replaces `argv[0]` semantics (a shim script) is outside what is tested.
@@ -393,9 +397,13 @@ confined to `src/render/`.
   viewport texture with a render encoder, so `RenderTarget` usage is
   required; librashader's own CLI sets `ShaderWrite` and works, so Metal
   may be lenient here. The design sets `RenderTarget | ShaderRead`
-  explicitly and the first real run confirms it.
+  explicitly and the first real run confirms it. Settled 2026-09-10: with
+  that usage the run rendered all fourteen `vectorscale.slangp` passes into
+  the output texture and the trace holds every one of them, so no
+  `ShaderWrite` is needed.
 - **Build time.** glslang and SPIRV-Cross compile from C++ on every clean
-  build (25.6 s wall for the dependency tree alone, measured 2026-09-10).
+  build (25.6 s wall for the dependency tree alone, 29.7 s for a clean
+  build of this crate, both measured 2026-09-10).
   The README's Requirements section says so, so nobody is surprised by
   `cargo install`.
 - **RetroArch stays on `gpucapture`.** `MTLCaptureManager` is an
