@@ -206,10 +206,16 @@ pub unsafe extern "C" fn video_refresh(
     }
     let mut s = shared();
     let rows = height as usize;
+    if rows == 0 || width == 0 {
+        s.frame = None;
+        return;
+    }
     // `to_bgra` reads `width * bytes_per_pixel` bytes from each row and
-    // indexes rows by `pitch`; both must be in range for every row.
+    // indexes rows by `pitch`; both must be in range for every row. The
+    // buffer a core owns ends with the last row's pixels, not its padding,
+    // so the slice covers `(rows - 1) * pitch + row_bytes` bytes.
     let row_bytes = (width as usize).checked_mul(bytes_per_pixel(s.pixel_format));
-    let total = rows.checked_mul(pitch);
+    let total = row_bytes.and_then(|rb| (rows - 1).checked_mul(pitch)?.checked_add(rb));
     let (Some(row_bytes), Some(total)) = (row_bytes, total) else {
         s.frame = None;
         return;
@@ -218,9 +224,10 @@ pub unsafe extern "C" fn video_refresh(
         s.frame = None;
         return;
     }
-    // SAFETY: the caller guarantees `data` points at `height` rows of
-    // `pitch` bytes, which is `total` bytes, valid for reads for the
-    // duration of this call; the slice is only read here and is dropped
+    // SAFETY: libretro.h guarantees `data` holds `height` rows `pitch`
+    // bytes apart, each with `width` pixels; the last row need not carry
+    // padding, so exactly `total` bytes are valid for reads for the
+    // duration of this call. The slice is only read here and is dropped
     // before returning, so no pointer of the core's escapes.
     let bytes = unsafe { std::slice::from_raw_parts(data as *const u8, total) };
     let bgra = to_bgra(s.pixel_format, bytes, width, height, pitch);

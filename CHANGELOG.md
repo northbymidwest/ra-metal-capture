@@ -31,6 +31,19 @@ Notable changes per release. Dates are the publish date.
   retroarch` for the RetroArch capture. A `--no-default-features` build
   still defaults to `retroarch`.
 - `--backend librashader` no longer requires `--image`.
+- Flags that only one backend honours are now rejected under the other,
+  naming the flag and the backend, instead of being ignored: `--app`,
+  `--cmd-port`, and `--keep-running` under librashader; `--core-options`
+  and `--skip-extension-check` under retroarch.
+- A hosted core's ROM must carry an extension the core declares
+  (`valid_extensions`); a mismatch is an error naming what the core
+  accepts. `--skip-extension-check` loads it anyway.
+- When a core is hosted, this process's stdout is pointed at stderr for
+  the rest of the run and the output path is written through the original
+  descriptor, so a core that prints to stdout cannot corrupt the path the
+  tool reports; `$(ra-metal-capture ...)` is one line again.
+- `--help` describes every flag for both backends; the crate-level docs
+  lead with the in-process backend and say what docs.rs omits.
 - The librashader backend resolves a bare core name, `--slot`, and the
   system directory against RetroArch's macOS default layout first and
   parses `retroarch.cfg` only when a default location is missing, so it

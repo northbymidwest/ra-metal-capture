@@ -51,7 +51,7 @@ path = "src/main.rs"
 anyhow = "1.0.104"
 clap = { version = "4.6.6", features = ["derive"] }
 tempfile = "3.27.0"
-nix = { version = "0.31.3", features = ["signal"] }
+nix = { version = "0.31.3", features = ["signal", "fs"] }
 objc2-foundation = { version = "0.3.2", features = ["NSGeometry", "NSString", "NSURL", "NSError"] }
 objc2-app-kit = { version = "0.3.2", features = ["NSScreen"] }
 # librashader backend (feature "librashader")

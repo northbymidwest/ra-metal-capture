@@ -98,15 +98,16 @@ ra-metal-capture \
 
 | flag | meaning |
 |---|---|
-| `--app PATH` | `.app` bundle or its binary. Default `/Applications/RetroArch.app`. |
+| `--app PATH` | `.app` bundle or its binary. Default `/Applications/RetroArch.app`. RetroArch backend only; rejected under librashader. |
 | `--core CORE` | `.dylib` path, or a bare name resolved in `libretro_directory` (`sameboy` finds `sameboy_libretro.dylib`). |
 | `--rom PATH` | content to load |
 | `--image FILE` | static image via RetroArch's image viewer; replaces `--core` and `--rom`; incompatible with `--state`, `--slot`, `--advance` |
-| `--backend NAME` | renderer: `librashader` (the default whenever the feature is compiled in) or `retroarch` (the default in a `--no-default-features` build); `librashader` requires `--shader` and takes either `--image` or `--core` with `--rom`; ignores `--app`, `--cmd-port`, `--keep-running` |
+| `--backend NAME` | renderer: `librashader` (the default whenever the feature is compiled in) or `retroarch` (the default in a `--no-default-features` build); `librashader` requires `--shader` and takes either `--image` or `--core` with `--rom`; rejects `--app`, `--cmd-port`, `--keep-running`, which only the RetroArch backend honours |
 | `--output PATH` | output `.gputrace` path (required) |
 | `--state FILE` | save state to load; copied to a temp states dir as slot 0, or under librashader restored into the hosted core after the ROM loads |
 | `--slot N` | load slot N from your real states dir instead; under librashader the file is found the way RetroArch names it under `savestate_directory` |
-| `--core-options FILE` | RetroArch-format `key = "value"` options for a hosted core; without it the core uses its built-in defaults; requires `--core` |
+| `--core-options FILE` | RetroArch-format `key = "value"` options for a hosted core; without it the core uses its built-in defaults; requires `--core`; librashader only |
+| `--skip-extension-check` | load a ROM whose extension the core does not declare; by default a mismatch is an error naming what the core accepts; librashader only |
 | `--shader PRESET` | `.slangp` / `.glslp` passed via `--set-shader` |
 | `--config PATH` | `retroarch.cfg` to base the run on; default `~/Library/Application Support/RetroArch/config/retroarch.cfg` |
 | `--size WxH` | exact window size in points (RetroArch) or output size in pixels (librashader) |
@@ -114,9 +115,9 @@ ra-metal-capture \
 | `--fullscreen` | launch with `-f` (RetroArch) or render at the main display's full pixel size (librashader) |
 | `--settle SECS` | wait before capturing when no state is given (default 5); under librashader with a hosted core, `round(SECS * fps)` emulated frames run before recording instead (image mode has no warm-up) |
 | `--advance N` | frame advances after loading the state, before the capture is armed (default 1, min 1); only applies when `--state` or `--slot` is given; under librashader, emulated frames run after the state and the Nth is the recorded one |
-| `--cmd-port PORT` | UDP port for RetroArch's command interface, enabled only for this run (default 55355) |
+| `--cmd-port PORT` | UDP port for RetroArch's command interface, enabled only for this run (default 55355); RetroArch backend only, rejected under librashader |
 | `--frames N` | frame boundaries to record (RetroArch) or frames to render with the frame count advancing (librashader) (default 1) |
-| `--keep-running` | do not close RetroArch afterwards |
+| `--keep-running` | do not close RetroArch afterwards; RetroArch backend only, rejected under librashader |
 | `-v` | print the command line and appendconfig, pass `-v` to RetroArch |
 
 By default the window is windowed and as large as fits the main display
@@ -202,6 +203,9 @@ no window, no input (every button reads as released, which is what makes
 the run repeatable), no audio. `--state` restores a RetroArch save state
 (RetroArch's compressed and container formats are both read); `--slot N`
 finds it the way RetroArch names it under `savestate_directory`. The
+ROM must carry an extension the core declares it accepts (SameBoy: gb,
+gbc, and so on) unless `--skip-extension-check` is given, so a file of the
+wrong kind is refused instead of loaded as a cartridge. The
 core runs on its built-in option defaults unless `--core-options FILE`
 names a RetroArch-format options file (for example
 `~/Library/Application Support/RetroArch/config/SameBoy/SameBoy.opt`), in

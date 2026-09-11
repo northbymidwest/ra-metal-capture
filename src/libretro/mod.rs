@@ -35,7 +35,25 @@ pub struct Context {
 pub struct SystemInfo {
     /// The core's own name, which RetroArch uses for per-core directories.
     pub library_name: String,
+    /// Content extensions the core accepts, lowercased, from libretro's
+    /// `valid_extensions` (`"gb|gbc"`). Empty when the core declares none.
+    pub valid_extensions: Vec<String>,
     pub need_fullpath: bool,
+}
+
+impl SystemInfo {
+    /// Whether `rom`'s extension is one the core declares. A core that
+    /// declares none accepts anything, as RetroArch treats it.
+    pub fn accepts_extension(&self, rom: &Path) -> bool {
+        if self.valid_extensions.is_empty() {
+            return true;
+        }
+        rom.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+            self.valid_extensions
+                .iter()
+                .any(|v| v == &e.to_ascii_lowercase())
+        })
+    }
 }
 
 /// `retro_get_system_av_info`, the parts this tool uses.
@@ -243,8 +261,21 @@ impl Core {
                 .to_string_lossy()
                 .into_owned()
         };
+        let valid_extensions = if raw.valid_extensions.is_null() {
+            Vec::new()
+        } else {
+            // SAFETY: as for library_name; libretro.h documents
+            // valid_extensions as a static, NUL-terminated string when set.
+            unsafe { CStr::from_ptr(raw.valid_extensions) }
+                .to_string_lossy()
+                .split('|')
+                .filter(|e| !e.is_empty())
+                .map(|e| e.to_ascii_lowercase())
+                .collect()
+        };
         SystemInfo {
             library_name: name,
+            valid_extensions,
             need_fullpath: raw.need_fullpath,
         }
     }
@@ -405,5 +436,32 @@ impl crate::render::FrameSource for Core {
             );
         }
         Ok(frame.bgra)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn info(exts: &[&str]) -> SystemInfo {
+        SystemInfo {
+            library_name: "SameBoy".into(),
+            valid_extensions: exts.iter().map(|e| e.to_string()).collect(),
+            need_fullpath: false,
+        }
+    }
+
+    #[test]
+    fn accepts_extension_is_case_insensitive_and_exact() {
+        let i = info(&["gb", "gbc"]);
+        assert!(i.accepts_extension(Path::new("/r/zelda.GBC")));
+        assert!(i.accepts_extension(Path::new("/r/tetris.gb")));
+        assert!(!i.accepts_extension(Path::new("/r/sample.png")));
+        assert!(!i.accepts_extension(Path::new("/r/noext")));
+    }
+
+    #[test]
+    fn a_core_declaring_no_extensions_accepts_anything() {
+        assert!(info(&[]).accepts_extension(Path::new("/r/anything.bin")));
     }
 }
