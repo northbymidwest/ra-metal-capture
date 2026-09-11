@@ -47,12 +47,13 @@ pub struct AvInfo {
     pub fps: f64,
 }
 
-/// A loaded core. Dropping it unloads the game and deinitialises the core.
+/// An open core. Dropping it unloads the game and deinitialises the core.
 pub struct Core {
     api: CoreAPI,
     // Held for the lifetime of `api`'s function pointers; never read.
     // Declared after `api` so the library is closed last.
     _lib: Library,
+    initialised: bool,
     loaded: bool,
     /// The base geometry from `load_game`'s `AvInfo`, zero before a game is
     /// loaded. `run_frame` requires every frame to match this size.
@@ -123,14 +124,12 @@ fn options_to_cstring(options: HashMap<String, String>) -> HashMap<String, CStri
 }
 
 impl Core {
-    /// dlopen `dylib`, resolve its API, install the callbacks, and call
-    /// `retro_init`. Only one `Core` may exist per process.
-    pub fn load(dylib: &Path, ctx: Context) -> Result<Core> {
-        // Everything fallible that does not need the claim happens first,
-        // so a bad path cannot leave the claim set.
-        let system_dir = cstring(&ctx.system_dir)?;
-        let save_dir = cstring(&ctx.save_dir)?;
-        let options = options_to_cstring(ctx.options);
+    /// dlopen `dylib` and resolve its API. No callback is installed and
+    /// `retro_init` is not called, so the core is not running yet: that is
+    /// `init`, which the caller reaches through `system_info` (the library
+    /// name names the options file the `Context` carries). Only one `Core`
+    /// may exist per process.
+    pub fn open(dylib: &Path) -> Result<Core> {
         {
             let mut s = env::shared();
             if s.claimed {
@@ -142,28 +141,18 @@ impl Core {
             // to libretro's ARGB1555 default along with everything else.
             *s = env::Shared {
                 claimed: true,
-                system_dir: Some(system_dir),
-                save_dir: Some(save_dir),
-                options,
                 ..Default::default()
             };
         }
         // Nothing past this point has a `Core` to drop, so a failure has to
         // release the claim itself or a retry would be refused with the
-        // wrong message. `retro_init` is the last step, so there is never
-        // an initialised core to deinitialise here.
-        Core::open(dylib).inspect_err(|_| env::shared().claimed = false)
+        // wrong message. Nothing here initialises the core, so there is
+        // never an initialised core to deinitialise on the way out.
+        Core::dlopen(dylib).inspect_err(|_| env::shared().claimed = false)
     }
 
-    /// Replace the core options a `GET_VARIABLE` call answers with. Call
-    /// this after `system_info` (which names the options file to read) and
-    /// before `load_game` (which is when a core typically reads them).
-    pub fn set_options(&mut self, options: HashMap<String, String>) {
-        env::shared().options = options_to_cstring(options);
-    }
-
-    /// The part of `load` that runs with the claim held.
-    fn open(dylib: &Path) -> Result<Core> {
+    /// The part of `open` that runs with the claim held.
+    fn dlopen(dylib: &Path) -> Result<Core> {
         // SAFETY: loading a libretro core runs its constructors, which the
         // API contract keeps side-effect free until retro_init.
         let lib = unsafe { Library::new(dylib) }
@@ -172,22 +161,21 @@ impl Core {
         // a libretro core, which is `resolve`'s requirement.
         let api = unsafe { resolve(&lib) }
             .with_context(|| format!("reading the libretro API of {}", dylib.display()))?;
-        // SAFETY: the libretro contract: every callback is set before
-        // retro_init, each with the signature libretro.h declares for it,
-        // and each points at a function in `env` that cannot unwind. `api`
-        // came from `lib`, which is still loaded and outlives this call.
-        unsafe {
-            (api.retro_set_environment)(env::environment);
-            (api.retro_set_video_refresh)(env::video_refresh);
-            (api.retro_set_audio_sample)(env::audio_sample);
-            (api.retro_set_audio_sample_batch)(env::audio_sample_batch);
-            (api.retro_set_input_poll)(env::input_poll);
-            (api.retro_set_input_state)(env::input_state);
-            (api.retro_init)();
+        // SAFETY: libretro.h documents retro_api_version as callable at any
+        // time, before retro_init included; it takes no arguments and only
+        // returns the constant the core was built against.
+        let version = unsafe { (api.retro_api_version)() };
+        if version != libretro_sys::API_VERSION {
+            bail!(
+                "{} reports libretro API version {version}; this build speaks version {}",
+                dylib.display(),
+                libretro_sys::API_VERSION
+            );
         }
         Ok(Core {
             api,
             _lib: lib,
+            initialised: false,
             loaded: false,
             base: Size {
                 width: 0,
@@ -196,7 +184,43 @@ impl Core {
         })
     }
 
-    /// `retro_get_system_info`, which a core may answer at any time.
+    /// Publish `ctx` to the callbacks, install them, and call `retro_init`.
+    /// The options travel in `ctx` because RetroArch has option values
+    /// available from `retro_init` onward and a core may read them there.
+    pub fn init(&mut self, ctx: Context) -> Result<()> {
+        if self.initialised {
+            bail!("this core is already initialised");
+        }
+        // Everything fallible happens before the shared state is touched,
+        // so a bad path cannot leave half a Context behind.
+        let system_dir = cstring(&ctx.system_dir)?;
+        let save_dir = cstring(&ctx.save_dir)?;
+        let options = options_to_cstring(ctx.options);
+        {
+            let mut s = env::shared();
+            s.system_dir = Some(system_dir);
+            s.save_dir = Some(save_dir);
+            s.options = options;
+        }
+        // SAFETY: the libretro contract: every callback is set before
+        // retro_init, each with the signature libretro.h declares for it,
+        // and each points at a function in `env` that cannot unwind. `api`
+        // came from `_lib`, which is still loaded and outlives this call.
+        unsafe {
+            (self.api.retro_set_environment)(env::environment);
+            (self.api.retro_set_video_refresh)(env::video_refresh);
+            (self.api.retro_set_audio_sample)(env::audio_sample);
+            (self.api.retro_set_audio_sample_batch)(env::audio_sample_batch);
+            (self.api.retro_set_input_poll)(env::input_poll);
+            (self.api.retro_set_input_state)(env::input_state);
+            (self.api.retro_init)();
+        }
+        self.initialised = true;
+        Ok(())
+    }
+
+    /// `retro_get_system_info`, which libretro.h allows at any time, even
+    /// before `init`.
     pub fn system_info(&self) -> SystemInfo {
         let mut raw = RawSystemInfo {
             library_name: std::ptr::null(),
@@ -227,6 +251,9 @@ impl Core {
 
     /// `retro_load_game` with the ROM's bytes and path, then the AV info.
     pub fn load_game(&mut self, rom: &Path) -> Result<AvInfo> {
+        if !self.initialised {
+            bail!("the core is not initialised (init must run before load_game)");
+        }
         if rom
             .extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
@@ -294,6 +321,9 @@ impl Core {
     /// `retro_unserialize`. The message on failure names both sizes, since
     /// a size mismatch is the usual cause (wrong core version or ROM).
     pub fn restore(&mut self, state: &[u8]) -> Result<()> {
+        if !self.loaded {
+            bail!("no game is loaded (load_game must run before restore)");
+        }
         // SAFETY: `state` is a live slice of `state.len()` readable bytes
         // for the duration of the call, which is what libretro.h asks for.
         let ok =
@@ -323,6 +353,9 @@ impl Core {
     /// rejected for inconsistent geometry, since that clears the stored one.
     /// The returned frame's size must match `load_game`'s base geometry.
     pub fn run_frame(&mut self) -> Result<Frame> {
+        if !self.loaded {
+            bail!("no game is loaded (load_game must run before run_frame)");
+        }
         // SAFETY: libretro.h allows this call once a game is loaded, and
         // every callback it reaches is one of `env`'s, which copy what they
         // need out before returning, so no pointer of the core's escapes.
@@ -336,16 +369,19 @@ impl Core {
 
 impl Drop for Core {
     fn drop(&mut self) {
-        // SAFETY: this mirrors `load` and runs exactly once, since `Core`
-        // is neither `Clone` nor reachable after drop: unload the game only
-        // if `load_game` succeeded, then deinitialise the core that `load`
-        // initialised. `_lib` is dropped after this, so the functions are
-        // still mapped.
+        // SAFETY: this mirrors `open` and `init` and runs exactly once,
+        // since `Core` is neither `Clone` nor reachable after drop: unload
+        // the game only if `load_game` succeeded, and deinitialise only the
+        // core that `init` initialised, since libretro.h pairs retro_deinit
+        // with retro_init. `_lib` is dropped after this, so the functions
+        // are still mapped.
         unsafe {
             if self.loaded {
                 (self.api.retro_unload_game)();
             }
-            (self.api.retro_deinit)();
+            if self.initialised {
+                (self.api.retro_deinit)();
+            }
         }
         let mut s = env::shared();
         s.claimed = false;

@@ -86,10 +86,27 @@ fn u32_at(b: &[u8], at: usize) -> Result<u32> {
     Ok(u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
 }
 
+/// The largest state `unrzip` will inflate or reserve room for. The total
+/// size comes straight out of the file's header, so a corrupt or hostile
+/// one could otherwise ask for an allocation that aborts the process
+/// instead of failing. RetroArch caps its own rzip buffers at 64 MB per
+/// chunk (`rzip_stream.c`); no console's save state approaches 256 MB.
+#[cfg(feature = "librashader")]
+const MAX_STATE_BYTES: u64 = 256 * 1024 * 1024;
+
 #[cfg(feature = "librashader")]
 fn unrzip(bytes: &[u8]) -> Result<Vec<u8>> {
     use std::io::Read;
-    let total = u64::from_le_bytes(bytes[12..20].try_into().expect("8 bytes")) as usize;
+    let header = bytes
+        .get(12..20)
+        .context("rzip header truncated before its size field")?;
+    let claimed = u64::from_le_bytes([
+        header[0], header[1], header[2], header[3], header[4], header[5], header[6], header[7],
+    ]);
+    if claimed > MAX_STATE_BYTES {
+        bail!("the rzip header claims {claimed} bytes, past the {MAX_STATE_BYTES}-byte limit");
+    }
+    let total = claimed as usize;
     let mut out = Vec::with_capacity(total);
     let mut pos = 20;
     while out.len() < total {
@@ -215,6 +232,16 @@ mod tests {
         let plain = rastate(&[(b"MEM ", &[7u8; 1000])]);
         let z = rzip(&plain, 300);
         assert_eq!(decode(&z).unwrap(), vec![7u8; 1000]);
+    }
+
+    #[cfg(feature = "librashader")]
+    #[test]
+    fn decode_rejects_an_rzip_header_claiming_an_absurd_size() {
+        let mut absurd = b"#RZIPv\x01#".to_vec();
+        absurd.extend_from_slice(&64u32.to_le_bytes());
+        absurd.extend_from_slice(&u64::MAX.to_le_bytes());
+        let err = decode(&absurd).unwrap_err().to_string();
+        assert!(err.contains("claims"), "{err}");
     }
 
     #[cfg(feature = "librashader")]

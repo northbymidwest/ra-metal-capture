@@ -1,6 +1,6 @@
 //! The frontend state a core reaches through its callbacks, and the six
 //! `extern "C"` callbacks themselves. libretro passes no user pointer, so
-//! this is process-wide; `Core::load` claims it and `Drop` releases it.
+//! this is process-wide; `Core::open` claims it and `Drop` releases it.
 //!
 //! Nothing here may unwind: a panic crossing back into the core's C frames
 //! is undefined behaviour. So the callbacks avoid `?`, `unwrap`, `expect`,
@@ -23,7 +23,7 @@ pub struct Frame {
 
 /// What the callbacks read and write.
 pub struct Shared {
-    /// Set by `Core::load`; a second load while this is true is refused.
+    /// Set by `Core::open`; a second open while this is true is refused.
     pub claimed: bool,
     pub system_dir: Option<CString>,
     pub save_dir: Option<CString>,
@@ -65,10 +65,19 @@ fn bytes_per_pixel(format: PixelFormat) -> usize {
     }
 }
 
-// `libretro-sys` 0.1.1 predates these two; the values are from libretro.h
-// (RETRO_ENVIRONMENT_SET_CORE_OPTIONS and _INTL).
+// `libretro-sys` 0.1.1 predates these four; the values are from libretro.h
+// (RETRO_ENVIRONMENT_SET_CORE_OPTIONS, _INTL, _V2 and _V2_INTL).
 const ENVIRONMENT_SET_CORE_OPTIONS: c_uint = 53;
 const ENVIRONMENT_SET_CORE_OPTIONS_INTL: c_uint = 54;
+const ENVIRONMENT_SET_CORE_OPTIONS_V2: c_uint = 67;
+const ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL: c_uint = 68;
+
+// The two flag bits libretro.h can set on a command value:
+// RETRO_ENVIRONMENT_EXPERIMENTAL marks a command whose number is otherwise
+// one of the documented ones, and RETRO_ENVIRONMENT_PRIVATE marks a
+// frontend's own command, whose low bits mean nothing here.
+const ENVIRONMENT_EXPERIMENTAL: c_uint = 0x10000;
+const ENVIRONMENT_PRIVATE: c_uint = 0x20000;
 
 /// The environment callback. Answers exactly what a software-rendered core
 /// needs and `false` to everything else.
@@ -83,8 +92,13 @@ pub unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
         ENVIRONMENT_GET_VARIABLE, ENVIRONMENT_GET_VARIABLE_UPDATE, ENVIRONMENT_SET_HW_RENDER,
         ENVIRONMENT_SET_PIXEL_FORMAT, ENVIRONMENT_SET_VARIABLES,
     };
-    // The experimental and private flag bits do not change the command.
-    let cmd = cmd & 0xffff;
+    // A private command is somebody else's; RetroArch matches full command
+    // values and only ever masks the experimental bit off (runloop.c), so
+    // clearing the private bit too would answer a command we do not know.
+    if cmd & ENVIRONMENT_PRIVATE != 0 {
+        return false;
+    }
+    let cmd = cmd & !ENVIRONMENT_EXPERIMENTAL;
     // Acknowledging a core's option list needs nothing from `data`, and
     // libretro.h lets a core pass NULL there to declare that it has none.
     if matches!(
@@ -92,6 +106,8 @@ pub unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
         ENVIRONMENT_SET_VARIABLES
             | ENVIRONMENT_SET_CORE_OPTIONS
             | ENVIRONMENT_SET_CORE_OPTIONS_INTL
+            | ENVIRONMENT_SET_CORE_OPTIONS_V2
+            | ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL
     ) {
         return true;
     }

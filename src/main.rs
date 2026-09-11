@@ -273,18 +273,17 @@ fn run_librashader(cli: &Cli) -> Result<()> {
             .tempdir()
             .context("creating temp dir")?;
 
-        // Load the core first: its library name picks the options file and the slot directory.
-        let mut core = libretro::Core::load(
-            &core_path,
-            libretro::Context {
-                system_dir: cfg.system_dir.clone(),
-                save_dir: tmp.path().to_path_buf(),
-                options: HashMap::new(),
-            },
-        )?;
+        // Open the core before initialising it: its library name picks the
+        // options file and the slot directory, and a core may read its
+        // options as early as `retro_init`, so they travel in the Context.
+        let mut core = libretro::Core::open(&core_path)?;
         let info = core.system_info();
         let options = cfg.core_options(&info.library_name)?;
-        core.set_options(options);
+        core.init(libretro::Context {
+            system_dir: cfg.system_dir.clone(),
+            save_dir: tmp.path().to_path_buf(),
+            options,
+        })?;
         let av = core.load_game(&rom)?;
         if cli.verbose {
             eprintln!(
@@ -308,7 +307,7 @@ fn run_librashader(cli: &Cli) -> Result<()> {
                     .with_context(|| format!("restoring state {}", path.display()))?;
                 cli.advance - 1
             }
-            None => (cli.settle * av.fps).round() as u32,
+            None => settle_frames(cli.settle, av.fps),
         };
         // `tmp` must outlive the core (it is the core's save dir); moving it
         // into the box alongside the core keeps it alive until render::run returns.
@@ -328,6 +327,15 @@ fn run_librashader(cli: &Cli) -> Result<()> {
     render::run(opts)?;
     println!("{}", output.display());
     Ok(())
+}
+
+/// Warm-up frames for `--settle` seconds at the core's own frame rate. A
+/// core that reports no frame rate is run at 60 fps, RetroArch's fallback,
+/// so the settle is a wait rather than nothing.
+#[cfg(feature = "librashader")]
+fn settle_frames(settle: f64, fps: f64) -> u32 {
+    let fps = if fps > 0.0 { fps } else { 60.0 };
+    (settle * fps).round() as u32
 }
 
 /// A core plus the temp dir it was told to save into.
@@ -735,6 +743,14 @@ mod tests {
         .unwrap();
         let err = run_librashader(&cli).unwrap_err().to_string();
         assert!(err.contains("zip"), "{err}");
+    }
+
+    #[cfg(feature = "librashader")]
+    #[test]
+    fn settle_frames_uses_sixty_fps_when_the_core_reports_none() {
+        assert_eq!(settle_frames(5.0, 59.728), 299);
+        assert_eq!(settle_frames(5.0, 0.0), 300);
+        assert_eq!(settle_frames(0.0, 59.728), 0);
     }
 
     #[test]
