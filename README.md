@@ -26,11 +26,14 @@ viewer, in place of an emulator core and ROM; see [Image mode](#image-mode).
 
 ## Requirements
 
-- macOS 27 or newer, with Xcode 27 or newer installed for `gpucapture`.
+- macOS 27 or newer, with Xcode 27 or newer installed. `gpucapture` is
+  needed for the RetroArch backend (the default); the librashader backend
+  needs Xcode for Metal's capture layer and to open the resulting trace.
   Older versions are untested and unsupported.
-- A RetroArch.app with its `video_driver` set to `vulkan` (the default
-  on macOS). The tool has been run against the release, nightly, and debug
-  builds.
+- For the RetroArch backend (the default), a RetroArch.app with its
+  `video_driver` set to `vulkan` (the default on macOS). The tool has been
+  run against the release, nightly, and debug builds. Not needed for
+  `--backend librashader`.
 - Rust 1.98 or newer to build.
 - The default build compiles librashader and its C++ dependencies (glslang,
   SPIRV-Cross) from source, about 30 s on an M-series Mac for a clean
@@ -102,7 +105,7 @@ ra-metal-capture \
 | `--settle SECS` | wait before capturing when no state is given (default 5) |
 | `--advance N` | frame advances after loading the state, before the capture is armed (default 1, min 1); only applies when `--state` or `--slot` is given |
 | `--cmd-port PORT` | UDP port for RetroArch's command interface, enabled only for this run (default 55355) |
-| `--frames N` | frame boundaries to record (default 1) |
+| `--frames N` | frame boundaries to record (RetroArch) or frames to render with the frame count advancing (librashader) (default 1) |
 | `--keep-running` | do not close RetroArch afterwards |
 | `-v` | print the command line and appendconfig, pass `-v` to RetroArch |
 
@@ -187,7 +190,8 @@ librashader trace is of librashader's rendering, not a pixel-exact stand-in
 for RetroArch's.
 
 Verified 2026-09-10: `--image sample.png --backend librashader --frames 2`
-with `vectorscale.slangp` produced a 34M bundle in 1.8 s at 3071x2764 px.
+with `vectorscale.slangp` produced a 34M bundle in 1.8 s (debug build) at
+3071x2764 px.
 
 ## Development
 
