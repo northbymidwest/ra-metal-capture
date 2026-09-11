@@ -33,17 +33,22 @@ use objc2_metal::{
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 
-/// Everything [`run`] needs: the image, the preset, how to size the output,
-/// how many frames to record, and where the bundle goes.
+/// Everything [`run`] needs: the frame source, the preset, how to size the
+/// output, how many frames to record, and where the bundle goes.
 pub struct RenderOptions {
-    /// The image to render. Decoded with the `image` crate.
-    pub image: PathBuf,
+    /// Where frames come from; image mode uses `ImageSource`, core hosting a
+    /// `libretro::Core`.
+    pub source: Box<dyn FrameSource>,
     /// The `.slangp` preset.
     pub preset: PathBuf,
     /// Window mode from the command line, mapped to pixels by [`output_size`].
     pub window: WindowMode,
     /// The main display, for `Fill` and `Fullscreen`.
     pub screen: Screen,
+    /// Frames rendered through the chain before the capture starts, so
+    /// history passes see real prior frames in the first recorded one.
+    /// Image mode uses 0.
+    pub warmup: u32,
     /// Number of frames to render and record; the frame count advances by one each.
     pub frames: u32,
     /// Absolute path of the `.gputrace` to write.
@@ -52,17 +57,47 @@ pub struct RenderOptions {
     pub verbose: bool,
 }
 
-/// Decode `path` to tightly packed BGRA8 rows, top row first.
-fn decode_bgra(path: &Path) -> Result<(Size, Vec<u8>)> {
-    let img = image::open(path)
-        .with_context(|| format!("decoding {}", path.display()))?
-        .into_rgba8();
-    let (width, height) = img.dimensions();
-    let mut bytes = img.into_raw();
-    for px in bytes.as_chunks_mut::<4>().0 {
-        px.swap(0, 2);
+/// Where frames come from: a decoded image (the same bytes forever) or a
+/// running libretro core (one emulated frame per call).
+pub trait FrameSource {
+    /// Size of every frame this source yields.
+    fn size(&self) -> Size;
+    /// The next frame as tightly packed BGRA8 rows, top row first,
+    /// exactly `size().width * size().height * 4` bytes.
+    fn next(&mut self) -> Result<Vec<u8>>;
+}
+
+/// A static image, decoded once.
+pub struct ImageSource {
+    size: Size,
+    bgra: Vec<u8>,
+}
+
+impl ImageSource {
+    /// Decode `path` with the `image` crate into BGRA8.
+    pub fn open(path: &Path) -> Result<ImageSource> {
+        let img = image::open(path)
+            .with_context(|| format!("decoding {}", path.display()))?
+            .into_rgba8();
+        let (width, height) = img.dimensions();
+        let mut bgra = img.into_raw();
+        for px in bgra.as_chunks_mut::<4>().0 {
+            px.swap(0, 2);
+        }
+        Ok(ImageSource {
+            size: Size { width, height },
+            bgra,
+        })
     }
-    Ok((Size { width, height }, bytes))
+}
+
+impl FrameSource for ImageSource {
+    fn size(&self) -> Size {
+        self.size
+    }
+    fn next(&mut self) -> Result<Vec<u8>> {
+        Ok(self.bgra.clone())
+    }
 }
 
 /// A BGRA8 2D texture of `size` with `usage`, in shared memory on an
@@ -103,11 +138,13 @@ fn new_texture(
     })
 }
 
-/// Render `opts.frames` frames of the image through the preset and write
-/// them to `opts.output` as a `.gputrace`.
-pub fn run(opts: &RenderOptions) -> Result<()> {
+/// Render `opts.warmup` uncaptured frames followed by `opts.frames`
+/// recorded frames from `opts.source` through the preset, writing the
+/// latter to `opts.output` as a `.gputrace`. The frame count passed to the
+/// filter chain runs continuously across both phases.
+pub fn run(mut opts: RenderOptions) -> Result<()> {
     prepare_output(&opts.output)?;
-    let (image_size, bytes) = decode_bgra(&opts.image)?;
+    let image_size = opts.source.size();
     let size = output_size(&opts.window, image_size, &opts.screen);
     if size.width == 0 || size.height == 0 {
         bail!(
@@ -118,8 +155,8 @@ pub fn run(opts: &RenderOptions) -> Result<()> {
     }
     if opts.verbose {
         eprintln!(
-            "image {}x{} -> output {}x{} px, {} frame(s)",
-            image_size.width, image_size.height, size.width, size.height, opts.frames
+            "source {}x{} -> output {}x{} px, {} warm-up + {} recorded frame(s)",
+            image_size.width, image_size.height, size.width, size.height, opts.warmup, opts.frames
         );
     }
 
@@ -129,27 +166,6 @@ pub fn run(opts: &RenderOptions) -> Result<()> {
         .context("creating a Metal command queue")?;
 
     let input = new_texture(&device, image_size, MTLTextureUsage::ShaderRead, "input")?;
-    let region = MTLRegion {
-        origin: MTLOrigin { x: 0, y: 0, z: 0 },
-        size: MTLSize {
-            width: image_size.width as usize,
-            height: image_size.height as usize,
-            depth: 1,
-        },
-    };
-    let pixels =
-        NonNull::new(bytes.as_ptr().cast_mut().cast()).context("decoded image buffer is null")?;
-    // SAFETY: `bytes` holds exactly width * height * 4 bytes of BGRA8 with
-    // rows of width * 4 bytes, matching `region` and the row stride, and
-    // Metal copies them before returning.
-    unsafe {
-        input.replaceRegion_mipmapLevel_withBytes_bytesPerRow(
-            region,
-            0,
-            pixels,
-            image_size.width as usize * 4,
-        )
-    };
     let output = new_texture(
         &device,
         size,
@@ -162,16 +178,61 @@ pub fn run(opts: &RenderOptions) -> Result<()> {
     let viewport = Viewport::new_render_target_sized_origin(&*output, None)
         .context("sizing the viewport to the output texture")?;
 
-    let trace = Trace::start(&device, &opts.output)?;
-    for frame in 0..opts.frames {
+    let upload = |bytes: &[u8]| -> Result<()> {
+        if bytes.len() != image_size.width as usize * image_size.height as usize * 4 {
+            bail!(
+                "frame source yielded {} bytes for {}x{}",
+                bytes.len(),
+                image_size.width,
+                image_size.height
+            );
+        }
+        let region = MTLRegion {
+            origin: MTLOrigin { x: 0, y: 0, z: 0 },
+            size: MTLSize {
+                width: image_size.width as usize,
+                height: image_size.height as usize,
+                depth: 1,
+            },
+        };
+        let pixels =
+            NonNull::new(bytes.as_ptr().cast_mut().cast()).context("frame buffer is null")?;
+        // SAFETY: `bytes` holds exactly width * height * 4 bytes of BGRA8
+        // with rows of width * 4 bytes (checked above), matching `region`
+        // and the row stride, and Metal copies them before returning.
+        unsafe {
+            input.replaceRegion_mipmapLevel_withBytes_bytesPerRow(
+                region,
+                0,
+                pixels,
+                image_size.width as usize * 4,
+            )
+        };
+        Ok(())
+    };
+    let mut render_one = |frame_count: usize| -> Result<()> {
         let cmd = queue
             .commandBuffer()
             .context("creating a Metal command buffer")?;
         chain
-            .frame(&input, &viewport, &cmd, frame as usize, None)
-            .with_context(|| format!("rendering frame {frame}"))?;
+            .frame(&input, &viewport, &cmd, frame_count, None)
+            .with_context(|| format!("rendering frame {frame_count}"))?;
         cmd.commit();
         cmd.waitUntilCompleted();
+        Ok(())
+    };
+
+    let mut count = 0usize;
+    for _ in 0..opts.warmup {
+        upload(&opts.source.next()?)?;
+        render_one(count)?;
+        count += 1;
+    }
+    let trace = Trace::start(&device, &opts.output)?;
+    for _ in 0..opts.frames {
+        upload(&opts.source.next()?)?;
+        render_one(count)?;
+        count += 1;
     }
     trace.finish();
 
@@ -234,6 +295,24 @@ pub fn output_size(mode: &WindowMode, image: Size, screen: &Screen) -> Size {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn image_source_yields_the_same_frame_every_time() {
+        let mut src = ImageSource::open(Path::new("sample.png")).unwrap();
+        assert_eq!(
+            src.size(),
+            Size {
+                width: 160,
+                height: 144
+            }
+        );
+        let a = src.next().unwrap();
+        let b = src.next().unwrap();
+        assert_eq!(a.len(), 160 * 144 * 4);
+        assert_eq!(a, b);
+        assert_eq!(a[3], 0xff, "opaque alpha");
+    }
 
     const GB: Size = Size {
         width: 160,

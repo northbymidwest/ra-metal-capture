@@ -240,15 +240,16 @@ fn run_librashader(cli: &Cli) -> Result<()> {
     let output = std::path::absolute(&cli.output)
         .with_context(|| format!("resolving {}", cli.output.display()))?;
     let opts = render::RenderOptions {
-        image: image.to_path_buf(),
+        source: Box::new(render::ImageSource::open(image)?),
         preset,
         window: cli.window_mode(),
         screen: display::main_screen(),
+        warmup: 0,
         frames: cli.frames,
         output: output.clone(),
         verbose: cli.verbose,
     };
-    render::run(&opts)?;
+    render::run(opts)?;
     println!("{}", output.display());
     Ok(())
 }

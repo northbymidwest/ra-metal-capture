@@ -54,6 +54,9 @@ pub struct Core {
     // Declared after `api` so the library is closed last.
     _lib: Library,
     loaded: bool,
+    /// The base geometry from `load_game`'s `AvInfo`, zero before a game is
+    /// loaded. `run_frame` requires every frame to match this size.
+    base: Size,
 }
 
 /// Resolve every `retro_*` symbol into a `CoreAPI`.
@@ -174,6 +177,10 @@ impl Core {
             api,
             _lib: lib,
             loaded: false,
+            base: Size {
+                width: 0,
+                height: 0,
+            },
         })
     }
 
@@ -256,11 +263,13 @@ impl Core {
         // libretro.h allows this call once retro_load_game has succeeded,
         // which the check above established.
         unsafe { (self.api.retro_get_system_av_info)(&mut av) };
+        let base = Size {
+            width: av.geometry.base_width,
+            height: av.geometry.base_height,
+        };
+        self.base = base;
         Ok(AvInfo {
-            base: Size {
-                width: av.geometry.base_width,
-                height: av.geometry.base_height,
-            },
+            base,
             max: Size {
                 width: av.geometry.max_width,
                 height: av.geometry.max_height,
@@ -294,6 +303,7 @@ impl Core {
     /// previous frame is returned again. It is an error before any frame has
     /// arrived, and also on a dupe that follows a frame `video_refresh`
     /// rejected for inconsistent geometry, since that clears the stored one.
+    /// The returned frame's size must match `load_game`'s base geometry.
     pub fn run_frame(&mut self) -> Result<Frame> {
         // SAFETY: libretro.h allows this call once a game is loaded, and
         // every callback it reaches is one of `env`'s, which copy what they
@@ -322,5 +332,24 @@ impl Drop for Core {
         let mut s = env::shared();
         s.claimed = false;
         s.frame = None;
+    }
+}
+
+impl crate::render::FrameSource for Core {
+    fn size(&self) -> Size {
+        self.base
+    }
+    fn next(&mut self) -> Result<Vec<u8>> {
+        let frame = self.run_frame()?;
+        if frame.size != self.base {
+            bail!(
+                "the core changed its frame size to {}x{} (base geometry is {}x{}); mid-run geometry changes are not supported",
+                frame.size.width,
+                frame.size.height,
+                self.base.width,
+                self.base.height
+            );
+        }
+        Ok(frame.bgra)
     }
 }
