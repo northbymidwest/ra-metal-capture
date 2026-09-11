@@ -127,9 +127,18 @@ unsafe fn resolve(lib: &Library) -> Result<CoreAPI> {
     })
 }
 
+/// A path as the UTF-8 C string libretro.h specifies for `retro_game_info`
+/// paths and the directory queries. Going through `&str` keeps the encoding
+/// claim in the types: a path that is not valid UTF-8 is an error rather
+/// than bytes a core would misread.
 fn cstring(path: &Path) -> Result<CString> {
-    CString::new(path.as_os_str().as_encoded_bytes())
-        .with_context(|| format!("{} contains a NUL byte", path.display()))
+    let utf8 = path.to_str().with_context(|| {
+        format!(
+            "{} is not valid UTF-8, which libretro requires of paths",
+            path.display()
+        )
+    })?;
+    CString::new(utf8).with_context(|| format!("{} contains a NUL byte", path.display()))
 }
 
 /// Convert a core options map to the `CString` values the callbacks read,
@@ -459,6 +468,21 @@ mod tests {
         assert!(i.accepts_extension(Path::new("/r/tetris.gb")));
         assert!(!i.accepts_extension(Path::new("/r/sample.png")));
         assert!(!i.accepts_extension(Path::new("/r/noext")));
+    }
+
+    #[test]
+    fn cstring_requires_utf8_and_no_interior_nul() {
+        use std::os::unix::ffi::OsStrExt;
+        assert_eq!(
+            cstring(Path::new("/roms/zelda.gbc")).unwrap().as_bytes(),
+            b"/roms/zelda.gbc"
+        );
+        let not_utf8 = Path::new(std::ffi::OsStr::from_bytes(b"/roms/\xff.gbc"));
+        let err = cstring(not_utf8).unwrap_err().to_string();
+        assert!(err.contains("UTF-8"), "{err}");
+        let with_nul = Path::new(std::ffi::OsStr::from_bytes(b"/roms/a\0b"));
+        let err = cstring(with_nul).unwrap_err().to_string();
+        assert!(err.contains("NUL"), "{err}");
     }
 
     #[test]
