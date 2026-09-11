@@ -65,6 +65,16 @@ pub fn visible_size() -> Size {
     main_screen().visible
 }
 
+/// A window mode as RetroArch should see it: a `Fill` loses the title bar
+/// allowance, since RetroArch's window has one and the visible frame does
+/// not exclude it. Other modes pass through.
+pub fn for_retroarch_window(mode: WindowMode) -> WindowMode {
+    match mode {
+        WindowMode::Fill { max } => fill_mode(max),
+        other => other,
+    }
+}
+
 /// The fill-the-screen window mode for a given visible size.
 pub fn fill_mode(visible: Size) -> WindowMode {
     WindowMode::Fill {
@@ -92,6 +102,22 @@ mod tests {
                     height: 1382
                 }
             }
+        );
+    }
+
+    #[test]
+    fn for_retroarch_window_trims_only_fill() {
+        let visible = Size {
+            width: 2488,
+            height: 1410,
+        };
+        assert_eq!(
+            for_retroarch_window(WindowMode::Fill { max: visible }),
+            fill_mode(visible)
+        );
+        assert_eq!(
+            for_retroarch_window(WindowMode::Scale(3)),
+            WindowMode::Scale(3)
         );
     }
 

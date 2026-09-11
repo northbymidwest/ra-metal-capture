@@ -52,6 +52,7 @@ anyhow = "1.0.104"
 clap = { version = "4.6.6", features = ["derive"] }
 tempfile = "3.27.0"
 nix = { version = "0.31.3", features = ["signal", "fs"] }
+ctrlc = "3.5.2"
 objc2-foundation = { version = "0.3.2", features = ["NSGeometry", "NSString", "NSURL", "NSError"] }
 objc2-app-kit = { version = "0.3.2", features = ["NSScreen"] }
 # librashader backend (feature "librashader")
@@ -69,5 +70,5 @@ objc2-metal = { version = "0.3.2", optional = true, features = [
 ] }
 image = { version = "0.25.8", optional = true, default-features = false, features = ["png", "jpeg", "bmp", "gif", "tga", "pnm", "hdr"] }
 libretro-sys = { version = "0.1.1", optional = true }
-libloading = { version = "0.9", optional = true }
-flate2 = { version = "1", optional = true }
+libloading = { version = "0.9.0", optional = true }
+flate2 = { version = "1.1.10", optional = true }

@@ -2,7 +2,7 @@
 //! Xcode's `gpucapture(1)`, driving the paused frame-advance flow, and
 //! shutting RetroArch down afterwards (or killing it on any failure).
 
-use crate::bundle::prepare_output;
+use crate::bundle::{discard_partial, prepare_output};
 use crate::launch::LaunchCommand;
 use crate::remote::Remote;
 use anyhow::{Context, Result, bail};
@@ -195,8 +195,9 @@ fn gpucapture_start(pid: u32, frames: u32, output: &Path, on_armed: impl FnOnce(
         bail!("`gpucapture start` failed with {status}");
     }
     if !output.join("index").exists() {
+        discard_partial(output);
         bail!(
-            "`gpucapture start` succeeded but {} has no `index` entry; the bundle looks incomplete",
+            "`gpucapture start` succeeded but {} has no `index` entry; the bundle looks incomplete and was removed",
             output.display()
         );
     }
@@ -273,6 +274,7 @@ fn capture_paused(
         Ok(()) => {}
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
             guard.kill_now();
+            discard_partial(output);
             let _ = capture.join();
             bail!("gpucapture did not report it was armed within {ARM_TIMEOUT:?}");
         }
@@ -282,6 +284,7 @@ fn capture_paused(
             // propagate its actual error instead of reporting a timeout
             // that did not happen.
             guard.kill_now();
+            discard_partial(output);
             match capture.join() {
                 Ok(Ok(())) => {
                     bail!("gpucapture exited before reporting it was armed")
@@ -309,6 +312,7 @@ fn capture_paused(
             }
             if !capture.is_finished() {
                 guard.kill_now();
+                discard_partial(output);
                 let _ = capture.join();
                 bail!(
                     "capture did not complete after {max_closing} frame advances \
@@ -320,6 +324,7 @@ fn capture_paused(
         }
         if let Err(e) = remote.frame_advance() {
             guard.kill_now();
+            discard_partial(output);
             let _ = capture.join();
             return Err(e.context("advancing a frame to close the capture; RetroArch was killed to release gpucapture"));
         }
@@ -331,6 +336,59 @@ fn capture_paused(
     }
     eprintln!("capture closed after {closing} further advance(s)");
     Ok(remote)
+}
+
+/// How long a free-running capture may take before RetroArch is killed to
+/// release `gpucapture`: time to open and close `frames` boundaries at
+/// display rate plus writing a bundle of tens of megabytes to disk.
+fn settle_capture_timeout(frames: u32) -> Duration {
+    Duration::from_secs(30) + Duration::from_secs(2) * frames
+}
+
+/// `gpucapture start` against a freely running RetroArch, bounded by
+/// [`settle_capture_timeout`]; on timeout RetroArch is killed (which
+/// releases `gpucapture`) and the partial bundle is removed.
+fn capture_settled(guard: &mut ChildGuard, frames: u32, output: &Path) -> Result<()> {
+    let pid = guard.pid();
+    let output_owned = output.to_path_buf();
+    let capture = std::thread::spawn(move || gpucapture_start(pid, frames, &output_owned, || {}));
+    let timeout = settle_capture_timeout(frames);
+    let deadline = Instant::now() + timeout;
+    while !capture.is_finished() {
+        if Instant::now() >= deadline {
+            guard.kill_now();
+            let _ = capture.join();
+            discard_partial(output);
+            bail!(
+                "the capture did not finish within {timeout:?}; RetroArch was killed to release gpucapture"
+            );
+        }
+        sleep(Duration::from_millis(100));
+    }
+    match capture.join() {
+        Ok(result) => result,
+        Err(_) => bail!("the gpucapture thread panicked"),
+    }
+}
+
+/// The pid of the RetroArch this process launched, for the Ctrl-C handler;
+/// 0 when there is none.
+static LAUNCHED_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static CTRLC_HANDLER: std::sync::Once = std::sync::Once::new();
+
+/// Kill the launched RetroArch on SIGINT or SIGTERM and exit 130. The drop
+/// guard covers every return and unwind; this covers the signal that
+/// skips both, so an interrupted run leaves no process behind either.
+fn install_ctrlc_handler() {
+    CTRLC_HANDLER.call_once(|| {
+        let _ = ctrlc::set_handler(|| {
+            let pid = LAUNCHED_PID.load(std::sync::atomic::Ordering::SeqCst);
+            if pid != 0 {
+                let _ = kill(Pid::from_raw(pid as i32), Signal::SIGKILL);
+            }
+            std::process::exit(130);
+        });
+    });
 }
 
 /// Launch RetroArch, wait until it is capturable, run the trigger, capture, terminate.
@@ -348,6 +406,8 @@ pub fn run(cmd: &LaunchCommand, opts: &CaptureOptions) -> Result<()> {
         .with_context(|| format!("launching {}", cmd.program.display()))?;
     let mut guard = ChildGuard { child, armed: true };
     let pid = guard.pid();
+    install_ctrlc_handler();
+    LAUNCHED_PID.store(pid, std::sync::atomic::Ordering::SeqCst);
     eprintln!("launched RetroArch as pid {pid}");
 
     wait_capturable(&mut guard, opts.ready_timeout, &opts.log_path)?;
@@ -357,7 +417,7 @@ pub fn run(cmd: &LaunchCommand, opts: &CaptureOptions) -> Result<()> {
             eprintln!("pid {pid} is capturable; settling for {settle:?}");
             sleep(settle);
             bail_if_exited(&mut guard, "during settle", &opts.log_path)?;
-            gpucapture_start(pid, opts.frames, &opts.output, || {})?;
+            capture_settled(&mut guard, opts.frames, &opts.output)?;
             None
         }
         Trigger::Paused { port, advance } => Some(capture_paused(
@@ -373,6 +433,7 @@ pub fn run(cmd: &LaunchCommand, opts: &CaptureOptions) -> Result<()> {
 
     if opts.keep_running {
         guard.armed = false;
+        LAUNCHED_PID.store(0, std::sync::atomic::Ordering::SeqCst);
         return Ok(());
     }
     if let Some(remote) = remote {
@@ -388,12 +449,19 @@ pub fn run(cmd: &LaunchCommand, opts: &CaptureOptions) -> Result<()> {
         }
     }
     guard.terminate(Duration::from_secs(3));
+    LAUNCHED_PID.store(0, std::sync::atomic::Ordering::SeqCst);
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settle_capture_timeout_grows_with_frames() {
+        assert_eq!(settle_capture_timeout(1), Duration::from_secs(32));
+        assert_eq!(settle_capture_timeout(10), Duration::from_secs(50));
+    }
 
     #[test]
     fn parses_pids_from_first_column() {

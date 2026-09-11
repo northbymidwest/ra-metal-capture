@@ -6,7 +6,7 @@ use crate::backend::{Backend, Request, Source, StateSource};
 use crate::config::{self, AppendConfig, PausedConfig};
 use crate::launch::{LaunchPlan, build_command};
 use crate::layout::{DirResolver, Located, describe_tried};
-use crate::{app, capture, core, image, remote, state};
+use crate::{app, capture, core, display, image, remote, state};
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -107,7 +107,7 @@ impl Backend for RetroArch {
         };
 
         let append = AppendConfig {
-            window: request.window.clone(),
+            window: display::for_retroarch_window(request.window.clone()),
             staged_states_dir,
             paused,
             image_viewer: matches!(request.source, Source::Image(_)),

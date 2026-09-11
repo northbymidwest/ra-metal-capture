@@ -153,8 +153,10 @@ the capture reports done. The recorded frame is the one `--advance`
 advances past the loaded state; the closing advances happen after it.
 
 Afterwards RetroArch is asked to quit, escalating to SIGTERM and then
-SIGKILL if it does not. A drop guard kills it on any failure, so no process
-is left behind.
+SIGKILL if it does not. A drop guard kills it on any failure the tool
+detects, a Ctrl-C handler kills it on interrupt, and a free-running capture
+that does not finish within a timeout kills it too, so no process is left
+behind. A capture that fails partway removes the partial bundle.
 
 ## Image mode
 
@@ -193,8 +195,10 @@ buffers, one per rendered frame.
 
 Sizing is in pixels: `--size` is taken as pixels, `--scale N` is N times
 the image, `--fullscreen` is the main display's full pixel size, and the
-default fits the image into the visible area at the display's backing
-scale, aspect preserved, matching RetroArch's fill mode. RetroArch and
+default fits the image into the whole visible area at the display's
+backing scale, aspect preserved (the RetroArch backend additionally leaves
+room for its window's title bar). No dimension may exceed 16384, Metal's
+texture limit. RetroArch and
 librashader are different implementations of the preset format; the
 librashader trace is of librashader's rendering, not a pixel-exact stand-in
 for RetroArch's.

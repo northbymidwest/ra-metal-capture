@@ -29,6 +29,16 @@ pub fn prepare_output(output: &Path) -> Result<()> {
         .with_context(|| format!("removing stale bundle {}", output.display()))
 }
 
+/// Remove whatever a failed capture left at `output`, so the next run is
+/// not refused for a bundle we wrote. Only called after [`prepare_output`]
+/// cleared the path at the start of the run, so anything there now is
+/// ours: a `.gputrace` directory, complete or not. Anything else is left.
+pub fn discard_partial(output: &Path) {
+    if output.extension().is_some_and(|e| e == "gputrace") && output.is_dir() {
+        let _ = std::fs::remove_dir_all(output);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -61,6 +71,23 @@ mod tests {
         let err = prepare_output(&dir).unwrap_err().to_string();
         assert!(err.contains("docs"), "{err}");
         assert!(dir.exists(), "must not delete a non-bundle directory");
+    }
+
+    #[test]
+    fn discard_partial_removes_only_a_gputrace_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let partial = tmp.path().join("half.gputrace");
+        std::fs::create_dir_all(&partial).unwrap();
+        discard_partial(&partial);
+        assert!(!partial.exists(), "an index-less bundle of ours is removed");
+        let other = tmp.path().join("notes");
+        std::fs::create_dir_all(&other).unwrap();
+        discard_partial(&other);
+        assert!(
+            other.exists(),
+            "a directory without the suffix is left alone"
+        );
+        discard_partial(&tmp.path().join("absent.gputrace"));
     }
 
     #[test]

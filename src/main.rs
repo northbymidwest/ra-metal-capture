@@ -202,7 +202,11 @@ impl Cli {
         } else if let Some(n) = self.scale {
             WindowMode::Scale(n)
         } else {
-            display::fill_mode(display::visible_size())
+            // The whole visible area; the RetroArch backend trims its own
+            // title bar allowance off this.
+            WindowMode::Fill {
+                max: display::visible_size(),
+            }
         }
     }
 }

@@ -16,7 +16,7 @@
 mod trace;
 pub use trace::{CAPTURE_ENV, Trace};
 
-use crate::bundle::prepare_output;
+use crate::bundle::discard_partial;
 use crate::config::{Size, WindowMode};
 use crate::display::Screen;
 use anyhow::{Context, Result, anyhow, bail};
@@ -56,7 +56,9 @@ pub struct RenderOptions {
     pub warmup: u32,
     /// Number of frames to render and record; the frame count advances by one each.
     pub frames: u32,
-    /// Absolute path of the `.gputrace` to write.
+    /// Absolute path of the `.gputrace` to write. The caller clears it
+    /// first with [`crate::bundle::prepare_output`]; a failed capture
+    /// removes what it left there.
     pub output: PathBuf,
     /// Print the decoded and output sizes to stderr.
     pub verbose: bool,
@@ -167,16 +169,9 @@ fn new_texture(
 /// latter to `opts.output` as a `.gputrace`. The frame count passed to the
 /// filter chain runs continuously across both phases.
 pub fn run(mut opts: RenderOptions) -> Result<()> {
-    prepare_output(&opts.output)?;
     let image_size = opts.source.size();
     let size = output_size(&opts.window, image_size, &opts.screen);
-    if size.width == 0 || size.height == 0 {
-        bail!(
-            "the output size is {}x{}; refusing to create a zero-sized texture",
-            size.width,
-            size.height
-        );
-    }
+    check_output_size(size)?;
     if opts.verbose {
         eprintln!(
             "source {}x{} -> output {}x{} px, {} warm-up + {} recorded frame(s)",
@@ -267,8 +262,9 @@ pub fn run(mut opts: RenderOptions) -> Result<()> {
     trace.finish();
 
     if !opts.output.join("index").exists() {
+        discard_partial(&opts.output);
         bail!(
-            "the Metal capture finished but {} has no `index` entry; the bundle looks incomplete",
+            "the Metal capture finished but {} has no `index` entry; the bundle looks incomplete and was removed",
             opts.output.display()
         );
     }
@@ -305,6 +301,31 @@ fn fit(image: Size, max: Size) -> Size {
     } else {
         fitted
     }
+}
+
+/// The largest texture dimension Metal allows on every Apple GPU family
+/// this tool runs on; a descriptor above it fails an assertion inside
+/// Metal rather than returning an error, so it is checked here first.
+pub const MAX_TEXTURE_DIM: u32 = 16384;
+
+/// Refuse an output size Metal would reject: a zero dimension, or one
+/// above [`MAX_TEXTURE_DIM`].
+pub fn check_output_size(size: Size) -> Result<()> {
+    if size.width == 0 || size.height == 0 {
+        bail!(
+            "the output size is {}x{}; refusing to create a zero-sized texture",
+            size.width,
+            size.height
+        );
+    }
+    if size.width > MAX_TEXTURE_DIM || size.height > MAX_TEXTURE_DIM {
+        bail!(
+            "the output size is {}x{}; Metal textures cannot exceed {MAX_TEXTURE_DIM} on a side, use a smaller --size or --scale",
+            size.width,
+            size.height
+        );
+    }
+    Ok(())
 }
 
 /// The output texture size, in pixels, for a window mode. RetroArch's modes
@@ -374,6 +395,31 @@ mod tests {
             },
             backing_scale,
         }
+    }
+
+    #[test]
+    fn check_output_size_rejects_zero_and_oversize() {
+        assert!(
+            check_output_size(Size {
+                width: 0,
+                height: 5
+            })
+            .is_err()
+        );
+        let err = check_output_size(Size {
+            width: 40000,
+            height: 10,
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("16384"), "{err}");
+        assert!(
+            check_output_size(Size {
+                width: 16384,
+                height: 16384
+            })
+            .is_ok()
+        );
     }
 
     #[test]

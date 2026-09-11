@@ -29,6 +29,17 @@ Notable changes per release. Dates are the publish date.
   crate decodes rather than RetroArch's image-viewer list.
 - `--help` and `--backend`'s value descriptions lead with the in-process
   backend.
+- An output size above Metal's 16384-pixel limit is an error naming the
+  limit instead of an assertion failure inside Metal.
+- A capture that fails after writing part of a bundle removes it, so the
+  next run is not refused for a directory this tool created.
+- Ctrl-C (SIGINT or SIGTERM) kills the RetroArch this tool launched
+  before exiting; a free-running (settle) capture is also bounded by a
+  timeout, after which RetroArch is killed to release gpucapture.
+- The default fill size for the in-process backend uses the whole visible
+  display area; only the RetroArch window subtracts the title bar.
+- A core that sets `need_fullpath` is handed the ROM path with no buffer,
+  as RetroArch does. `AvInfo` lost its unused `max` and `aspect_ratio`.
 
 ## 0.4.0 - 2026-09-11
 

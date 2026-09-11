@@ -60,8 +60,6 @@ impl SystemInfo {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AvInfo {
     pub base: Size,
-    pub max: Size,
-    pub aspect_ratio: f32,
     pub fps: f64,
 }
 
@@ -304,11 +302,21 @@ impl Core {
                 rom.display()
             );
         }
-        let bytes = std::fs::read(rom).with_context(|| format!("reading {}", rom.display()))?;
+        // A core that sets need_fullpath opens the content itself and is
+        // handed no buffer, as RetroArch does; the rest get the bytes.
+        let bytes = if self.system_info().need_fullpath {
+            Vec::new()
+        } else {
+            std::fs::read(rom).with_context(|| format!("reading {}", rom.display()))?
+        };
         let path = cstring(rom)?;
         let info = GameInfo {
             path: path.as_ptr(),
-            data: bytes.as_ptr() as *const c_void,
+            data: if bytes.is_empty() {
+                std::ptr::null()
+            } else {
+                bytes.as_ptr() as *const c_void
+            },
             size: bytes.len(),
             meta: std::ptr::null(),
         };
@@ -350,11 +358,6 @@ impl Core {
         self.base = base;
         Ok(AvInfo {
             base,
-            max: Size {
-                width: av.geometry.max_width,
-                height: av.geometry.max_height,
-            },
-            aspect_ratio: av.geometry.aspect_ratio,
             fps: av.timing.fps,
         })
     }
