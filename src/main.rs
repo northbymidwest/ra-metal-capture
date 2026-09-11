@@ -50,9 +50,9 @@ const DEFAULT_BACKEND: BackendChoice = BackendChoice::Retroarch;
 #[derive(Parser, Debug)]
 #[command(version)]
 struct Cli {
-    /// RetroArch .app bundle, or the binary inside it (retroarch backend
-    /// only; default /Applications/RetroArch.app)
-    #[arg(long)]
+    /// RetroArch .app bundle, or the binary inside it
+    /// (default /Applications/RetroArch.app)
+    #[arg(long, help_heading = "RetroArch backend")]
     app: Option<PathBuf>,
 
     /// Path to a libretro .dylib, or a bare name resolved in RetroArch's
@@ -94,14 +94,18 @@ struct Cli {
     #[arg(long, conflicts_with = "state")]
     slot: Option<u32>,
 
-    /// Core options file (RetroArch `key = "value"` format) for a hosted
-    /// core; without it the core uses its built-in defaults (librashader only)
-    #[arg(long, requires = "core", conflicts_with = "image")]
+    /// Core options file (RetroArch `key = "value"` format) for the hosted
+    /// core; without it the core uses its built-in defaults
+    #[arg(
+        long,
+        requires = "core",
+        conflicts_with = "image",
+        help_heading = "librashader backend"
+    )]
     core_options: Option<PathBuf>,
 
     /// Load the ROM even if its extension is not one the core declares
-    /// (librashader only)
-    #[arg(long, requires = "core")]
+    #[arg(long, requires = "core", help_heading = "librashader backend")]
     skip_extension_check: bool,
 
     /// Shader preset (.slangp / .glslp); required by the librashader
@@ -138,13 +142,14 @@ struct Cli {
     settle: f64,
 
     /// Frames to run after loading the state; the last one is the first
-    /// recorded (librashader) or the one captured (retroarch)
+    /// recorded (librashader) or the one captured (retroarch). Ignored
+    /// without --state or --slot
     #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
     advance: u32,
 
     /// UDP port for RetroArch's command interface, enabled only for this
-    /// run (retroarch only; default 55355)
-    #[arg(long)]
+    /// run (default 55355)
+    #[arg(long, help_heading = "RetroArch backend")]
     cmd_port: Option<u16>,
 
     /// Consecutive emulated frames to record (librashader) or frame
@@ -156,8 +161,8 @@ struct Cli {
     #[arg(long)]
     output: PathBuf,
 
-    /// Leave RetroArch running after the capture (retroarch only)
-    #[arg(long)]
+    /// Leave RetroArch running after the capture
+    #[arg(long, help_heading = "RetroArch backend")]
     keep_running: bool,
 
     /// Print sizes and the core's geometry (librashader), or the command

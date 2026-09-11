@@ -1,5 +1,6 @@
-//! ra-metal-capture: record a Metal frame trace (`.gputrace`) of a
-//! RetroArch shader preset. The binary of the same name is the intended
+//! ra-metal-capture: record a Metal frame trace (`.gputrace`) of a shader
+//! preset, rendered in this process through librashader or captured from
+//! a running RetroArch. The binary of the same name is the intended
 //! interface; this library is its building blocks, so that each piece can
 //! be tested on its own and reused.
 //!
