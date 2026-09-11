@@ -122,25 +122,40 @@ in the repository.
 **`Core`** (`mod.rs`):
 
 ```rust
-pub struct Core { lib: libloading::Library, api: libretro_sys::CoreAPI, loaded: bool }
+pub struct Core {
+    lib: libloading::Library,
+    api: libretro_sys::CoreAPI,
+    initialised: bool,
+    loaded: bool,
+}
 
 impl Core {
-    /// dlopen the core, resolve every `retro_*` symbol, install the
-    /// callbacks, and call `retro_init`. Fails if another Core is alive
-    /// in this process.
-    pub fn load(dylib: &Path, ctx: Context) -> Result<Core>;
-    /// `retro_get_system_info`: library name, valid extensions, need_fullpath.
+    /// dlopen the core, resolve every `retro_*` symbol, and check
+    /// `retro_api_version`. No callback is installed and `retro_init` is
+    /// not called. Fails if another Core is alive in this process.
+    pub fn open(dylib: &Path) -> Result<Core>;
+    /// `retro_get_system_info`: library name, valid extensions,
+    /// need_fullpath. libretro.h allows this call before `retro_init`,
+    /// which is why it comes before `init`: the library name is what names
+    /// the options file the Context carries.
     pub fn system_info(&self) -> SystemInfo;
+    /// Publish the Context to the callbacks, install them, and call
+    /// `retro_init`. The options are in the Context because a core may
+    /// read them as early as `retro_init`, as they are under RetroArch.
+    /// Fails if the core is already initialised.
+    pub fn init(&mut self, ctx: Context) -> Result<()>;
     /// `retro_load_game` with the file's bytes (and path), then
-    /// `retro_get_system_av_info`. Refuses `.zip`.
+    /// `retro_get_system_av_info`. Refuses `.zip`; requires `init`.
     pub fn load_game(&mut self, rom: &Path) -> Result<AvInfo>;
     /// `retro_unserialize`; the message on failure names both sizes.
+    /// Requires a loaded game.
     pub fn restore(&mut self, state: &[u8]) -> Result<()>;
     /// `retro_run` once and return the frame it delivered (or the
-    /// previous one on a dupe). Fails if no frame has ever arrived.
+    /// previous one on a dupe). Requires a loaded game, and fails if no
+    /// frame has ever arrived.
     pub fn run_frame(&mut self) -> Result<&Frame>;
 }
-impl Drop for Core { /* retro_unload_game if loaded, retro_deinit, release the process slot */ }
+impl Drop for Core { /* retro_unload_game if loaded, retro_deinit if initialised, release the process slot */ }
 
 pub struct AvInfo { pub base: Size, pub max: Size, pub aspect_ratio: f32, pub fps: f64 }
 pub struct Frame { pub size: Size, pub bgra: Vec<u8> }
@@ -154,7 +169,7 @@ pub struct Context {
 libretro callbacks carry no user pointer, so the frontend state they
 touch is a process-wide `static` behind a `Mutex` (`env.rs`): the pixel
 format, the options map as `CString`s, the directory strings, and the
-latest frame. `Core::load` takes a process-wide slot and `Drop` releases
+latest frame. `Core::open` takes a process-wide slot and `Drop` releases
 it, so a second `Core` in one process is an error rather than two cores
 sharing one set of globals. The tool only ever needs one.
 
@@ -254,8 +269,10 @@ Under `--backend librashader` with `--core`:
 
 1. Read the config keys listed under CLI. Resolve the core with
    `core::resolve_core` as today. Refuse a `.zip` ROM up front.
-2. `Core::load`, `system_info` for the library name (needed for the
-   options file and slot path), read the options file, `load_game`.
+2. `Core::open`, `system_info` for the library name (needed for the
+   options file and slot path), read the options file, `init` with the
+   directories and those options (so a core that reads them in
+   `retro_init` sees the real values), `load_game`.
 3. Resolve the state: `--state` is read as given; `--slot` goes through
    `state::slot_path`. `state::decode`, then `Core::restore`.
 4. Warm-up count: `--advance - 1` with a state (so the recorded frame is
@@ -273,7 +290,8 @@ Image mode goes through the same `render::run` with an `ImageSource` and
 ```
 args + retroarch.cfg
   -> resolve core dylib, system dir, options file, state path
-  -> Core::load (dlopen, callbacks, retro_init)
+  -> Core::open (dlopen, resolve, api version) -> system_info -> options
+  -> Core::init (Context, callbacks, retro_init)
   -> Core::load_game (retro_load_game, av info -> base size)
   -> state::decode -> Core::restore            (with --state/--slot)
   -> render::run(source = Core):
@@ -288,8 +306,9 @@ args + retroarch.cfg
 ## Error handling
 
 `anyhow` throughout, naming the core, ROM, or state path. `Core`'s `Drop`
-always runs `retro_deinit`, so a failed load leaves no half-initialised
-core, and the process-wide slot is released. The C callbacks never
+runs `retro_deinit` for every core `init` initialised, so a failure after
+`init` leaves no half-initialised core, and a failure inside `open`, which
+has no `Core` to drop, releases the process-wide slot itself. The C callbacks never
 unwind: each is a small body that locks a mutex, copies or answers, and
 returns; there is no `?` and no panic path inside them (a poisoned mutex
 is recovered with `into_inner`). Frames are copied out inside the

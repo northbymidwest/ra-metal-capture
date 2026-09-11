@@ -94,19 +94,23 @@ advancing until the capture closes, because a paused RetroArch only
 presents on a frame advance. The measured constants and their reasons are
 in the doc comments on `capture.rs` and in the spec.
 
-`libretro/mod.rs` hosts a core in this process: `Core::load` dlopens the
-`.dylib` through `libloading`, resolves every `retro_*` symbol, installs the
-callbacks, and calls `retro_init`; `Core::load_game` loads the ROM and
-returns `AvInfo`; `Core::restore` feeds a decoded state to
-`retro_unserialize`; and `Core::run_frame` runs one `retro_run` and returns
+`libretro/mod.rs` hosts a core in this process in four steps: `Core::open`
+dlopens the `.dylib` through `libloading`, resolves every `retro_*` symbol,
+and checks `retro_api_version`; `Core::system_info` names the core, which is
+what picks its options file and its state directory, and libretro.h allows
+that call before `retro_init`; `Core::init` publishes the `Context` to the
+callbacks, installs them, and calls `retro_init`, so a core that reads its
+options that early sees the real values; and `Core::load_game` loads the ROM
+and returns `AvInfo`. Then `Core::restore` feeds a decoded state to
+`retro_unserialize`, and `Core::run_frame` runs one `retro_run` and returns
 the `Frame` the core delivered. libretro's callbacks carry no user pointer,
 so everything they need lives in a process-wide static in `libretro/env.rs`,
-and `Core::load` therefore refuses a second core in the same process;
-`Drop` unloads the game, deinitializes, and releases that slot. `Context`
-carries the config the `environment` callback answers from (system and save
-directories, core options read from RetroArch's per-core `.opt` file). A
-`Core` is a `render::FrameSource`, which is how emulated frames reach the
-render loop.
+and `Core::open` therefore refuses a second core in the same process;
+`Drop` unloads the game, deinitializes what `init` initialized, and releases
+that slot. `Context` carries the config the `environment` callback answers
+from (system and save directories, core options read from RetroArch's
+per-core `.opt` file). A `Core` is a `render::FrameSource`, which is how
+emulated frames reach the render loop.
 
 `render/mod.rs` builds BGRA8 textures, loads the preset with
 `librashader::runtime::mtl::FilterChain`, and runs a two-phase loop over a

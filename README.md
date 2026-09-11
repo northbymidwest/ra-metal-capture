@@ -109,9 +109,9 @@ ra-metal-capture \
 | `--shader PRESET` | `.slangp` / `.glslp` passed via `--set-shader` |
 | `--config PATH` | `retroarch.cfg` to base the run on; default `~/Library/Application Support/RetroArch/config/retroarch.cfg` |
 | `--size WxH` | exact window size in points (RetroArch) or output size in pixels (librashader) |
-| `--scale N` | integer scale of the core's native resolution |
-| `--fullscreen` | launch with `-f` |
-| `--settle SECS` | wait before capturing when no state is given (default 5); under librashader, `round(SECS * fps)` emulated frames run before recording instead |
+| `--scale N` | integer scale of the core's native resolution, in window points (RetroArch) or output pixels (librashader) |
+| `--fullscreen` | launch with `-f` (RetroArch) or render at the main display's full pixel size (librashader) |
+| `--settle SECS` | wait before capturing when no state is given (default 5); under librashader with a hosted core, `round(SECS * fps)` emulated frames run before recording instead (image mode has no warm-up) |
 | `--advance N` | frame advances after loading the state, before the capture is armed (default 1, min 1); only applies when `--state` or `--slot` is given; under librashader, emulated frames run after the state and the Nth is the recorded one |
 | `--cmd-port PORT` | UDP port for RetroArch's command interface, enabled only for this run (default 55355) |
 | `--frames N` | frame boundaries to record (RetroArch) or frames to render with the frame count advancing (librashader) (default 1) |
