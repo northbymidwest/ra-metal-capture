@@ -96,10 +96,3 @@ implementations, open-source projects, etc.). No audit has been conducted to
 identify such instances, as this is a personal side project. Any such code
 fragments remain subject to the licenses of their original creators. Use at
 your own discretion.
-
-### librashader
-
-The default build links the librashader crates, which are MPL-2.0. MPL is
-file-scoped: it covers those crates' own source, which is on crates.io,
-and places no terms on this crate or on binaries built from it beyond
-that. `--no-default-features` builds without them.
