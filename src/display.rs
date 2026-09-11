@@ -1,5 +1,7 @@
-//! The main display's visible size, for the default fill-the-screen window
-//! mode. Queries AppKit; falls back to 1920x1080 off the main thread.
+//! The main display: its visible and full frames in points and its
+//! backing scale, for the default fill-the-screen window mode and for
+//! sizing the librashader backend's output in pixels. Queries AppKit;
+//! falls back to 1920x1080 at 1x off the main thread.
 
 use crate::config::{Size, WindowMode};
 use objc2_app_kit::NSScreen;
@@ -13,23 +15,54 @@ const FALLBACK: Size = Size {
     height: 1080,
 };
 
-/// Width and height in points of the main display's visible frame
-/// (excludes the menu bar and dock). Falls back to 1920x1080 with a
-/// warning on stderr when no screen can be queried.
-pub fn visible_size() -> Size {
+/// The main display as the tool sees it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Screen {
+    /// Visible frame in points; excludes the menu bar and dock.
+    pub visible: Size,
+    /// The whole display in points.
+    pub full: Size,
+    /// Pixels per point, for example 2.0 on a Retina display.
+    pub backing_scale: f64,
+}
+
+const FALLBACK_SCREEN: Screen = Screen {
+    visible: FALLBACK,
+    full: FALLBACK,
+    backing_scale: 1.0,
+};
+
+/// The main display's visible frame, full frame, and backing scale. Falls
+/// back to 1920x1080 at 1x with a warning on stderr when no screen can be
+/// queried.
+pub fn main_screen() -> Screen {
     let Some(mtm) = MainThreadMarker::new() else {
-        eprintln!("warning: not on the main thread; assuming a 1920x1080 display");
-        return FALLBACK;
+        eprintln!("warning: not on the main thread; assuming a 1920x1080 display at 1x");
+        return FALLBACK_SCREEN;
     };
     let Some(screen) = NSScreen::mainScreen(mtm) else {
-        eprintln!("warning: no main screen; assuming a 1920x1080 display");
-        return FALLBACK;
+        eprintln!("warning: no main screen; assuming a 1920x1080 display at 1x");
+        return FALLBACK_SCREEN;
     };
-    let frame = screen.visibleFrame();
-    Size {
-        width: frame.size.width as u32,
-        height: frame.size.height as u32,
+    let visible = screen.visibleFrame();
+    let full = screen.frame();
+    Screen {
+        visible: Size {
+            width: visible.size.width as u32,
+            height: visible.size.height as u32,
+        },
+        full: Size {
+            width: full.size.width as u32,
+            height: full.size.height as u32,
+        },
+        backing_scale: screen.backingScaleFactor(),
     }
+}
+
+/// Width and height in points of the main display's visible frame
+/// (excludes the menu bar and dock). See [`main_screen`] for the fallback.
+pub fn visible_size() -> Size {
+    main_screen().visible
 }
 
 /// The fill-the-screen window mode for a given visible size.
@@ -76,5 +109,19 @@ mod tests {
                 }
             }
         );
+    }
+
+    #[test]
+    fn visible_size_matches_main_screen() {
+        // Both are AppKit queries (or the same fallback off the main thread),
+        // so they must agree; this pins visible_size to main_screen.
+        assert_eq!(visible_size(), main_screen().visible);
+    }
+
+    #[test]
+    fn fallback_screen_is_1080p_at_1x() {
+        assert_eq!(FALLBACK_SCREEN.visible, FALLBACK);
+        assert_eq!(FALLBACK_SCREEN.full, FALLBACK);
+        assert_eq!(FALLBACK_SCREEN.backing_scale, 1.0);
     }
 }
