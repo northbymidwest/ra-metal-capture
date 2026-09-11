@@ -12,7 +12,7 @@
 //! RetroArch or `gpucapture` until [`capture::run`] is called.
 //!
 //! With the `librashader` feature (on by default), image mode can instead
-//! render in-process through [`render::run`], which writes the trace with
+//! render in-process through `render::run`, which writes the trace with
 //! Metal's capture API and never launches RetroArch.
 #![deny(unsafe_code)]
 

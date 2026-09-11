@@ -58,7 +58,9 @@ fn decode_bgra(path: &Path) -> Result<(Size, Vec<u8>)> {
     Ok((Size { width, height }, bytes))
 }
 
-/// A BGRA8 2D texture of `size` with `usage`, in shared memory.
+/// A BGRA8 2D texture of `size` with `usage`, in shared memory on a device
+/// with unified memory (Apple silicon, natively or under Rosetta) and
+/// managed memory otherwise.
 fn new_texture(
     device: &ProtocolObject<dyn MTLDevice>,
     size: Size,
@@ -74,7 +76,7 @@ fn new_texture(
             false,
         )
     };
-    desc.setStorageMode(if cfg!(target_arch = "aarch64") {
+    desc.setStorageMode(if device.hasUnifiedMemory() {
         MTLStorageMode::Shared
     } else {
         MTLStorageMode::Managed
