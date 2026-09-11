@@ -268,7 +268,7 @@ fn build(cli: Cli) -> Result<(Box<dyn Backend>, Request)> {
         settle: cli.settle,
         advance: cli.advance,
         output,
-        config: cli.config.clone(),
+        config: Some(cli.config.clone()),
         verbose: cli.verbose,
     };
     Ok((backend, request))

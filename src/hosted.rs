@@ -77,7 +77,7 @@ impl Backend for Hosted {
                 if !rom.is_file() {
                     bail!("ROM not found at {}", rom.display());
                 }
-                let mut dirs = DirResolver::for_config(&request.config, request.verbose);
+                let mut dirs = DirResolver::for_config(request.config.as_deref(), request.verbose);
                 let core_path = if Path::new(core_arg).is_file() {
                     PathBuf::from(core_arg)
                 } else {
@@ -275,7 +275,7 @@ mod tests {
             settle: 5.0,
             advance: 1,
             output: PathBuf::from("/nonexistent-dir/x.gputrace"),
-            config: PathBuf::from("/nonexistent/retroarch.cfg"),
+            config: None,
             verbose: false,
         }
     }

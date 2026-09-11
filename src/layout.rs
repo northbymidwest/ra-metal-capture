@@ -95,11 +95,12 @@ impl<'a> DirResolver<'a> {
         }
     }
 
-    /// The resolver for the `retroarch.cfg` at `path`, absent or not.
-    pub fn for_config(path: &'a Path, verbose: bool) -> DirResolver<'a> {
+    /// The resolver for the `retroarch.cfg` at `path`, absent or not; with
+    /// `None` the defaults are the only layout ever tried.
+    pub fn for_config(path: Option<&'a Path>, verbose: bool) -> DirResolver<'a> {
         DirResolver::new(
             RetroArchDirs::defaults(),
-            move || std::fs::read_to_string(path).ok(),
+            move || path.and_then(|p| std::fs::read_to_string(p).ok()),
             verbose,
         )
     }
@@ -253,6 +254,16 @@ mod tests {
         let tried = vec![PathBuf::from("/d/system"), PathBuf::from("/c/system")];
         assert_eq!(hit, Located::Missing(tried.clone()));
         assert_eq!(describe_tried(&tried), "/d/system or /c/system");
+    }
+
+    #[test]
+    fn for_config_none_never_consults_a_file() {
+        let mut r = DirResolver::for_config(None, false);
+        let hit = r.locate("core", |d| d.libretro_dir.clone(), |_| false);
+        assert_eq!(
+            hit,
+            Located::Missing(vec![RetroArchDirs::defaults().libretro_dir])
+        );
     }
 
     #[test]

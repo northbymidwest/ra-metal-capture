@@ -20,6 +20,8 @@ Notable changes per release. Dates are the publish date.
   behind the `librashader` feature.
 - The binary only parses arguments, builds a `Request`, and picks a
   backend. Behaviour is unchanged.
+- `Request.config` is an `Option`: `None` consults no `retroarch.cfg` at
+  all, for a machine without RetroArch; the binary passes its default.
 - The RetroArch backend reads `retroarch.cfg` only when resolving a bare
   core name, and only if the core is not in the default cores directory,
   so image mode needs no config file.

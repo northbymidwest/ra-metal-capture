@@ -50,8 +50,11 @@ pub struct Request {
     pub advance: u32,
     /// Absolute path of the `.gputrace` to write.
     pub output: PathBuf,
-    /// The `retroarch.cfg` a backend may consult for RetroArch's layout.
-    pub config: PathBuf,
+    /// A `retroarch.cfg` to consult when a path inferred from RetroArch's
+    /// default layout is missing. `None` means consult nothing, as on a
+    /// machine without RetroArch; a `Some` that does not exist is treated
+    /// the same way.
+    pub config: Option<PathBuf>,
     pub verbose: bool,
 }
 

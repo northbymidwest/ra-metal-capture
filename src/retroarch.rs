@@ -55,7 +55,7 @@ impl Backend for RetroArch {
                 if !rom.is_file() {
                     bail!("ROM not found at {}", rom.display());
                 }
-                let core_path = resolve_core(core_arg, &request.config, request.verbose)?;
+                let core_path = resolve_core(core_arg, request.config.as_deref(), request.verbose)?;
                 (Some(core_path), rom.clone(), state.clone())
             }
         };
@@ -162,7 +162,11 @@ impl Backend for RetroArch {
 /// A core path as given, or a bare name found in RetroArch's cores
 /// directory: the default location first, `retroarch.cfg`'s
 /// `libretro_directory` only if the default has no such core.
-fn resolve_core(core_arg: &str, config_path: &std::path::Path, verbose: bool) -> Result<PathBuf> {
+fn resolve_core(
+    core_arg: &str,
+    config_path: Option<&std::path::Path>,
+    verbose: bool,
+) -> Result<PathBuf> {
     if std::path::Path::new(core_arg).is_file() {
         return Ok(PathBuf::from(core_arg));
     }
@@ -193,7 +197,7 @@ mod tests {
             settle: 5.0,
             advance: 1,
             output: PathBuf::from("/tmp/x.gputrace"),
-            config: PathBuf::from("/nonexistent/retroarch.cfg"),
+            config: None,
             verbose: false,
         }
     }
