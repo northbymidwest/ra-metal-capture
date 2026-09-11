@@ -74,20 +74,25 @@ pub struct ImageSource {
 }
 
 impl ImageSource {
-    /// Decode `path` with the `image` crate into BGRA8.
-    pub fn open(path: &Path) -> Result<ImageSource> {
-        let img = image::open(path)
-            .with_context(|| format!("decoding {}", path.display()))?
-            .into_rgba8();
+    /// Take an image already in memory, converting RGBA8 to BGRA8.
+    pub fn from_image(img: image::RgbaImage) -> ImageSource {
         let (width, height) = img.dimensions();
         let mut bgra = img.into_raw();
         for px in bgra.as_chunks_mut::<4>().0 {
             px.swap(0, 2);
         }
-        Ok(ImageSource {
+        ImageSource {
             size: Size { width, height },
             bgra,
-        })
+        }
+    }
+
+    /// Decode the file at `path` with the `image` crate.
+    pub fn open(path: &Path) -> Result<ImageSource> {
+        let img = image::open(path)
+            .with_context(|| format!("decoding {}", path.display()))?
+            .into_rgba8();
+        Ok(ImageSource::from_image(img))
     }
 }
 
@@ -298,8 +303,25 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn image_source_yields_the_same_frame_every_time() {
-        let mut src = ImageSource::open(Path::new("sample.png")).unwrap();
+    fn image_source_swaps_rgba_to_bgra_and_repeats() {
+        // A 2x1 image: red then blue, both opaque.
+        let img = image::RgbaImage::from_raw(2, 1, vec![255, 0, 0, 255, 0, 0, 255, 255]).unwrap();
+        let mut src = ImageSource::from_image(img);
+        assert_eq!(
+            src.size(),
+            Size {
+                width: 2,
+                height: 1
+            }
+        );
+        let a = src.next().unwrap();
+        assert_eq!(a, [0, 0, 255, 255, 255, 0, 0, 255]);
+        assert_eq!(src.next().unwrap(), a);
+    }
+
+    #[test]
+    fn image_source_open_decodes_the_fixture() {
+        let src = ImageSource::open(Path::new("sample.png")).unwrap();
         assert_eq!(
             src.size(),
             Size {
@@ -307,11 +329,7 @@ mod tests {
                 height: 144
             }
         );
-        let a = src.next().unwrap();
-        let b = src.next().unwrap();
-        assert_eq!(a.len(), 160 * 144 * 4);
-        assert_eq!(a, b);
-        assert_eq!(a[3], 0xff, "opaque alpha");
+        assert!(ImageSource::open(Path::new("Cargo.toml")).is_err());
     }
 
     const GB: Size = Size {

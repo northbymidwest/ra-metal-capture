@@ -251,7 +251,9 @@ pub struct RenderOptions {
 }
 ```
 
-`ImageSource::open(path)` lives in `render`; the core source lives in
+`ImageSource::from_image(RgbaImage)` does the conversion with no IO and
+`ImageSource::open(path)` decodes a file and delegates to it; both live in
+`render`. The core source lives in
 `libretro` (`impl FrameSource for Core` runs one frame per `next`), so
 `render` knows nothing about libretro and `libretro` knows nothing about
 Metal. The run loop becomes: `warmup` iterations of upload-and-render with
@@ -328,8 +330,9 @@ Unit tests, no core, GPU, or RetroArch:
 - `state::slot_path`: the four directory rules and the slot-0 versus
   slot-N naming.
 - `config::read_all`: quoted values, comments, blank lines.
-- `render::ImageSource`: `sample.png` yields 160x144 and the same bytes
-  twice.
+- `render::ImageSource`: a 2x1 in-memory image comes out swapped to BGRA
+  and the same on every call; `open` on `sample.png` yields 160x144 and
+  on a non-image fails.
 - `main`: `--backend librashader --core c --rom r` parses; with `--image`
   too it is rejected; `--slot` and `--state` still conflict; a `.zip` ROM
   is refused before any core is loaded (checked in `run` with a fake

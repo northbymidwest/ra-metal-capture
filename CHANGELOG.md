@@ -13,7 +13,8 @@ Notable changes per release. Dates are the publish date.
   emulated frames; `--advance` and `--settle` keep their meanings.
 - `libretro` module (feature `librashader`): `Core`, `Context`, `AvInfo`,
   `Frame`, `pixels::to_bgra`.
-- `render::FrameSource` and `render::ImageSource`.
+- `render::FrameSource` and `render::ImageSource` (`from_image` for an image
+  already in memory, `open` for a file).
 - `state::decode`, `state::slot_path`, `state::StateDirs`; `config::read_all`.
 
 ### Changed
