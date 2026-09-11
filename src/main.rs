@@ -152,7 +152,7 @@ struct Cli {
 
     /// Without a save state: emulated seconds to run a hosted core before
     /// recording (librashader), or seconds to wait before capturing (retroarch)
-    #[arg(long, default_value_t = 5.0, value_parser = parse_settle)]
+    #[arg(long, default_value_t = 5.0, value_parser = parse_settle, allow_negative_numbers = true)]
     settle: f64,
 
     /// Frames to run after loading the state; the last one is the first
@@ -876,6 +876,8 @@ mod tests {
     #[test]
     fn settle_rejects_negative_and_nan() {
         assert!(parse_rom(&["--settle=-1"]).is_err());
+        let err = parse_rom(&["--settle", "-3"]).unwrap_err().to_string();
+        assert!(err.contains("non-negative"), "{err}");
         assert!(parse_rom(&["--settle=nan"]).is_err());
         assert_eq!(parse_rom(&["--settle", "2.5"]).unwrap().settle, 2.5);
     }
