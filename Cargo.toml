@@ -37,7 +37,7 @@ no-default-features = true
 default = ["librashader"]
 # The in-process image backend: librashader's Metal runtime plus Metal's
 # capture API. Without it the tool is RetroArch-only and builds no C++.
-librashader = ["dep:librashader", "dep:objc2", "dep:objc2-metal", "dep:image"]
+librashader = ["dep:librashader", "dep:objc2", "dep:objc2-metal", "dep:image", "dep:libretro-sys", "dep:libloading", "dep:flate2"]
 
 [lib]
 name = "ra_metal_capture"
@@ -68,3 +68,6 @@ objc2-metal = { version = "0.3.2", optional = true, features = [
     "MTLTypes",
 ] }
 image = { version = "0.25.8", optional = true, default-features = false, features = ["png", "jpeg", "bmp", "gif", "tga", "pnm", "hdr"] }
+libretro-sys = { version = "0.1.1", optional = true }
+libloading = { version = "0.9", optional = true }
+flate2 = { version = "1", optional = true }

@@ -22,6 +22,8 @@ allow = [
     "Zlib",
     "MPL-2.0",
     "BSD-3-Clause",
+    # ISC is libloading.
+    "ISC",
 ]
 unused-allowed-license = "deny"
 
