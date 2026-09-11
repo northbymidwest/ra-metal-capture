@@ -165,11 +165,6 @@ Because the image viewer never advances a frame counter, shader passes
 that depend on frame count or a history of prior frames see a permanently
 frozen image rather than the animation they would see under a running core.
 
-Verified 2026-09-10: `--image sample.png` (160x144) with
-`vectorscale.slangp` produced a 144M bundle, with the appendconfig ending
-in `builtin_imageviewer_enable = "true"` and no `-L` on the command line.
-`sample.png` is committed as the fixture used.
-
 ### Backends
 
 `--backend librashader` renders the image through the same preset with the
@@ -190,10 +185,6 @@ scale, aspect preserved, matching RetroArch's fill mode. RetroArch and
 librashader are different implementations of the preset format; the
 librashader trace is of librashader's rendering, not a pixel-exact stand-in
 for RetroArch's.
-
-Verified 2026-09-10: `--image sample.png --backend librashader --frames 2`
-with `vectorscale.slangp` produced a 34M bundle in 1.8 s (debug build) at
-3071x2764 px.
 
 ## Development
 
