@@ -19,6 +19,7 @@ exclude = [
     "/deny.toml",
     "/typos.toml",
     "/RELEASING.md",
+    "/CLAUDE.md",
     "/sample.png",
 ]
 
