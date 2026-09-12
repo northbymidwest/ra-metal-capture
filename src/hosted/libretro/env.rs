@@ -10,15 +10,17 @@
 use super::pixels::{PixelFormat, to_bgra};
 use super::sys;
 use crate::config::Size;
+use crate::hosted::render::Frame;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_uint, c_void};
 use std::sync::{LazyLock, Mutex, MutexGuard};
 
-/// One emulated frame, tightly packed BGRA8, top row first.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Frame {
+/// A geometry a core announced mid-run with `SET_GEOMETRY` or
+/// `SET_SYSTEM_AV_INFO`: its new base size and aspect.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Geometry {
     pub size: Size,
-    pub bgra: Vec<u8>,
+    pub aspect_ratio: f64,
 }
 
 /// What the callbacks read and write.
@@ -39,6 +41,8 @@ pub struct Shared {
     pub pixel_format: PixelFormat,
     pub asked_for_hw_render: bool,
     pub frame: Option<Frame>,
+    /// The latest geometry the core announced, taken by `Core::next`.
+    pub geometry: Option<Geometry>,
 }
 
 impl Default for Shared {
@@ -54,6 +58,7 @@ impl Default for Shared {
             pixel_format: PixelFormat::Xrgb1555,
             asked_for_hw_render: false,
             frame: None,
+            geometry: None,
         }
     }
 }
@@ -77,8 +82,28 @@ fn bytes_per_pixel(format: PixelFormat) -> usize {
 /// The core-options API version this frontend implements, answered to
 /// `GET_CORE_OPTIONS_VERSION`; a core then registers with the v2 form.
 const CORE_OPTIONS_VERSION: c_uint = 2;
+// Commands whose libretro.h value carries the experimental bit, which is
+// masked off before matching, so their patterns need the bare numbers.
+const EXPERIMENTAL: c_uint = sys::RETRO_ENVIRONMENT_EXPERIMENTAL;
+const GET_AUDIO_VIDEO_ENABLE: c_uint =
+    sys::RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE & !EXPERIMENTAL;
+const GET_INPUT_BITMASKS: c_uint = sys::RETRO_ENVIRONMENT_GET_INPUT_BITMASKS & !EXPERIMENTAL;
+const SET_MEMORY_MAPS: c_uint = sys::RETRO_ENVIRONMENT_SET_MEMORY_MAPS & !EXPERIMENTAL;
+const SET_SUPPORT_ACHIEVEMENTS: c_uint =
+    sys::RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS & !EXPERIMENTAL;
 /// `RETRO_NUM_CORE_OPTION_VALUES_MAX` as a length.
 const NUM_CORE_OPTION_VALUES_MAX: usize = sys::RETRO_NUM_CORE_OPTION_VALUES_MAX as usize;
+
+/// The size and aspect a `retro_game_geometry` announces.
+fn geometry_of(g: &sys::retro_game_geometry) -> Geometry {
+    Geometry {
+        size: Size {
+            width: g.base_width,
+            height: g.base_height,
+        },
+        aspect_ratio: f64::from(g.aspect_ratio),
+    }
+}
 
 /// A C string as an owned key or value; None for a null pointer.
 ///
@@ -286,6 +311,43 @@ pub unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
                 *(data as *mut c_uint) = CORE_OPTIONS_VERSION;
                 true
             }
+            // A core may resize mid-run (SNES hi-res modes, layout
+            // changes); the new base geometry is recorded for `Core::next`
+            // and the render loop follows the frames themselves. The
+            // timing half of an AV info is not needed.
+            sys::RETRO_ENVIRONMENT_SET_GEOMETRY => {
+                s.geometry = Some(geometry_of(&*(data as *const sys::retro_game_geometry)));
+                true
+            }
+            sys::RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO => {
+                let av = &*(data as *const sys::retro_system_av_info);
+                s.geometry = Some(geometry_of(&av.geometry));
+                true
+            }
+            // Audio is discarded, so the core may skip synthesising it.
+            // Video stays on; the hard-disable bit is left clear so a
+            // core keeps its emulation (and save states) exact.
+            GET_AUDIO_VIDEO_ENABLE => {
+                *(data as *mut c_uint) =
+                    sys::retro_av_enable_flags::RETRO_AV_ENABLE_VIDEO as c_uint;
+                true
+            }
+            // Every input reads as neutral, as a bitmask too, so a core
+            // may read all buttons in one call.
+            GET_INPUT_BITMASKS => true,
+            sys::RETRO_ENVIRONMENT_GET_LANGUAGE => {
+                *(data as *mut c_uint) = sys::retro_language::RETRO_LANGUAGE_ENGLISH as c_uint;
+                true
+            }
+            // Declarations this frontend has no use for but a core may
+            // check the acknowledgement of; RetroArch accepts them all.
+            sys::RETRO_ENVIRONMENT_SET_PERFORMANCE_LEVEL
+            | sys::RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME
+            | sys::RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS
+            | sys::RETRO_ENVIRONMENT_SET_CONTROLLER_INFO
+            | sys::RETRO_ENVIRONMENT_SET_SUBSYSTEM_INFO
+            | SET_MEMORY_MAPS
+            | SET_SUPPORT_ACHIEVEMENTS => true,
             sys::RETRO_ENVIRONMENT_SET_VARIABLES => {
                 register_v0(&mut s, data as *const sys::retro_variable);
                 true
@@ -685,6 +747,109 @@ mod tests {
             &mut version as *mut c_uint as *mut c_void
         ));
         assert_eq!(version, 2);
+    }
+
+    #[test]
+    fn set_geometry_and_set_system_av_info_record_the_new_geometry() {
+        let _g = fresh();
+        assert_eq!(shared().geometry, None);
+        let mut geom = sys::retro_game_geometry {
+            base_width: 512,
+            base_height: 224,
+            max_width: 512,
+            max_height: 480,
+            aspect_ratio: 1.5,
+        };
+        assert!(env(
+            sys::RETRO_ENVIRONMENT_SET_GEOMETRY,
+            &mut geom as *mut sys::retro_game_geometry as *mut c_void
+        ));
+        assert_eq!(
+            shared().geometry,
+            Some(Geometry {
+                size: Size {
+                    width: 512,
+                    height: 224
+                },
+                aspect_ratio: 1.5
+            })
+        );
+        let mut av = sys::retro_system_av_info {
+            geometry: sys::retro_game_geometry {
+                base_width: 256,
+                base_height: 240,
+                max_width: 256,
+                max_height: 240,
+                aspect_ratio: 0.0,
+            },
+            timing: sys::retro_system_timing {
+                fps: 60.0,
+                sample_rate: 44100.0,
+            },
+        };
+        assert!(env(
+            sys::RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,
+            &mut av as *mut sys::retro_system_av_info as *mut c_void
+        ));
+        assert_eq!(
+            shared().geometry.map(|g| g.size),
+            Some(Size {
+                width: 256,
+                height: 240
+            })
+        );
+    }
+
+    #[test]
+    fn audio_video_enable_says_video_only() {
+        let _g = fresh();
+        let mut flags: c_uint = 0xff;
+        assert!(env(
+            sys::RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE,
+            &mut flags as *mut c_uint as *mut c_void
+        ));
+        assert_eq!(
+            flags,
+            sys::retro_av_enable_flags::RETRO_AV_ENABLE_VIDEO as c_uint
+        );
+    }
+
+    #[test]
+    fn input_bitmasks_and_language_are_answered() {
+        let _g = fresh();
+        let mut ignored = 0u8;
+        assert!(env(
+            sys::RETRO_ENVIRONMENT_GET_INPUT_BITMASKS,
+            &mut ignored as *mut u8 as *mut c_void
+        ));
+        let mut language: c_uint = 99;
+        assert!(env(
+            sys::RETRO_ENVIRONMENT_GET_LANGUAGE,
+            &mut language as *mut c_uint as *mut c_void
+        ));
+        assert_eq!(
+            language,
+            sys::retro_language::RETRO_LANGUAGE_ENGLISH as c_uint
+        );
+    }
+
+    #[test]
+    fn informational_declarations_are_acknowledged_without_being_read() {
+        let _g = fresh();
+        // The data is never dereferenced, so any non-null pointer will do.
+        let mut sentinel = 0u8;
+        let data = &mut sentinel as *mut u8 as *mut c_void;
+        for cmd in [
+            sys::RETRO_ENVIRONMENT_SET_PERFORMANCE_LEVEL,
+            sys::RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME,
+            sys::RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS,
+            sys::RETRO_ENVIRONMENT_SET_CONTROLLER_INFO,
+            sys::RETRO_ENVIRONMENT_SET_SUBSYSTEM_INFO,
+            sys::RETRO_ENVIRONMENT_SET_MEMORY_MAPS,
+            sys::RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS,
+        ] {
+            assert!(env(cmd, data), "cmd {cmd}");
+        }
     }
 
     #[test]

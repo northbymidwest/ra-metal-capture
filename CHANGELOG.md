@@ -4,6 +4,21 @@ Notable changes per release. Dates are the publish date.
 
 ## Unreleased
 
+### Added
+
+- A hosted core may change its frame size mid-run (SNES hi-res modes,
+  snes9x's Mode 7 hi-res option): the render loop re-creates its input
+  texture for the new size instead of failing, and `SET_GEOMETRY` and
+  `SET_SYSTEM_AV_INFO` are acknowledged and recorded. The output keeps
+  the size the boot geometry gave it. `FrameSource::next` yields a
+  `render::Frame` carrying its own size.
+- The environment callback tells a core it may skip audio synthesis
+  (`GET_AUDIO_VIDEO_ENABLE`, video only), that input may be read as a
+  bitmask, and that the language is English, and acknowledges the
+  informational declarations RetroArch accepts (performance level,
+  no-game support, input descriptors, controller and subsystem info,
+  memory maps, achievements).
+
 ### Changed
 
 - libretro's types and constants are generated from a vendored

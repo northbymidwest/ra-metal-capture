@@ -68,24 +68,32 @@ pub struct RenderOptions {
     pub verbose: bool,
 }
 
+/// One frame: tightly packed BGRA8 rows, top row first, exactly
+/// `size.width * size.height * 4` bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Frame {
+    pub size: Size,
+    pub bgra: Vec<u8>,
+}
+
 /// Where frames come from: a decoded image (the same bytes forever) or a
 /// running libretro core (one emulated frame per call).
 pub trait FrameSource {
-    /// Size of every frame this source yields.
+    /// The source's nominal size: an image's, or a core's base geometry.
+    /// It sizes the output; a core's frames may come at another size
+    /// (SNES hi-res modes do), which [`run`] follows by re-creating its
+    /// input texture.
     fn size(&self) -> Size;
     /// The source's own aspect ratio: a core's reported one, or the pixel
     /// aspect for an image or a core that reports none.
     fn aspect_ratio(&self) -> f64;
-    /// The next frame as tightly packed BGRA8 rows, top row first,
-    /// exactly `size().width * size().height * 4` bytes, valid until the
-    /// next call.
-    fn next(&mut self) -> Result<&[u8]>;
+    /// The next frame, valid until the next call.
+    fn next(&mut self) -> Result<&Frame>;
 }
 
 /// A static image, decoded once.
 pub struct ImageSource {
-    size: Size,
-    bgra: Vec<u8>,
+    frame: Frame,
 }
 
 impl ImageSource {
@@ -109,8 +117,10 @@ impl ImageSource {
             px.swap(0, 2);
         }
         ImageSource {
-            size: Size { width, height },
-            bgra,
+            frame: Frame {
+                size: Size { width, height },
+                bgra,
+            },
         }
     }
 
@@ -125,13 +135,13 @@ impl ImageSource {
 
 impl FrameSource for ImageSource {
     fn size(&self) -> Size {
-        self.size
+        self.frame.size
     }
     fn aspect_ratio(&self) -> f64 {
-        pixel_aspect(self.size)
+        pixel_aspect(self.frame.size)
     }
-    fn next(&mut self) -> Result<&[u8]> {
-        Ok(&self.bgra)
+    fn next(&mut self) -> Result<&Frame> {
+        Ok(&self.frame)
     }
 }
 
@@ -178,7 +188,7 @@ fn new_texture(
 /// latter to `opts.output` as a `.gputrace`. The frame count passed to the
 /// filter chain runs continuously across both phases.
 pub fn run(mut opts: RenderOptions) -> Result<()> {
-    let image_size = opts.source.size();
+    let mut image_size = opts.source.size();
     check_texture_size(image_size).context("the source frame")?;
     let aspect = opts.aspect.ratio_or(opts.source.aspect_ratio());
     let size = output_size(&opts.window, image_size, aspect, &opts.screen);
@@ -195,7 +205,7 @@ pub fn run(mut opts: RenderOptions) -> Result<()> {
         .newCommandQueue()
         .context("creating a Metal command queue")?;
 
-    let input = new_texture(&device, image_size, MTLTextureUsage::ShaderRead, "input")?;
+    let mut input = new_texture(&device, image_size, MTLTextureUsage::ShaderRead, "input")?;
     let output = new_texture(
         &device,
         size,
@@ -208,58 +218,75 @@ pub fn run(mut opts: RenderOptions) -> Result<()> {
     let viewport = Viewport::new_render_target_sized_origin(&*output, None)
         .context("sizing the viewport to the output texture")?;
 
-    let upload = |bytes: &[u8]| -> Result<()> {
-        if bytes.len() != image_size.width as usize * image_size.height as usize * 4 {
+    let upload = |input: &ProtocolObject<dyn MTLTexture>, frame: &Frame| -> Result<()> {
+        let Size { width, height } = frame.size;
+        if frame.bgra.len() != width as usize * height as usize * 4 {
             bail!(
-                "frame source yielded {} bytes for {}x{}",
-                bytes.len(),
-                image_size.width,
-                image_size.height
+                "frame source yielded {} bytes for {width}x{height}",
+                frame.bgra.len()
             );
         }
         let region = MTLRegion {
             origin: MTLOrigin { x: 0, y: 0, z: 0 },
             size: MTLSize {
-                width: image_size.width as usize,
-                height: image_size.height as usize,
+                width: width as usize,
+                height: height as usize,
                 depth: 1,
             },
         };
         let pixels =
-            NonNull::new(bytes.as_ptr().cast_mut().cast()).context("frame buffer is null")?;
-        // SAFETY: `bytes` holds exactly width * height * 4 bytes of BGRA8
-        // with rows of width * 4 bytes (checked above), matching `region`
-        // and the row stride, and Metal copies them before returning.
+            NonNull::new(frame.bgra.as_ptr().cast_mut().cast()).context("frame buffer is null")?;
+        // SAFETY: `frame.bgra` holds exactly width * height * 4 bytes of
+        // BGRA8 with rows of width * 4 bytes (checked above), matching
+        // `region` and the row stride, and Metal copies them before
+        // returning. `input` is a texture of exactly that size, created
+        // for it by the loop below.
         unsafe {
             input.replaceRegion_mipmapLevel_withBytes_bytesPerRow(
                 region,
                 0,
                 pixels,
-                image_size.width as usize * 4,
+                width as usize * 4,
             )
         };
         Ok(())
     };
-    let mut render_one = |frame_count: usize| -> Result<()> {
-        let cmd = queue
-            .commandBuffer()
-            .context("creating a Metal command buffer")?;
-        chain
-            .frame(&input, &viewport, &cmd, frame_count, None)
-            .with_context(|| format!("rendering frame {frame_count}"))?;
-        cmd.commit();
-        cmd.waitUntilCompleted();
-        Ok(())
-    };
+    let mut render_one =
+        |input: &ProtocolObject<dyn MTLTexture>, frame_count: usize| -> Result<()> {
+            let cmd = queue
+                .commandBuffer()
+                .context("creating a Metal command buffer")?;
+            chain
+                .frame(input, &viewport, &cmd, frame_count, None)
+                .with_context(|| format!("rendering frame {frame_count}"))?;
+            cmd.commit();
+            cmd.waitUntilCompleted();
+            Ok(())
+        };
 
     // Both phases: a frame per call, the count running on across them.
-    // Ctrl-C is polled between frames (see `interrupt`).
+    // Ctrl-C is polled between frames (see `interrupt`). A frame at a new
+    // size (a core switching resolution) gets a new input texture; the
+    // output keeps the size the boot geometry gave it, as RetroArch's
+    // window does.
     let mut count = 0usize;
     let mut render_frames = |n: u32| -> Result<()> {
         for _ in 0..n {
             interrupt::check()?;
-            upload(opts.source.next()?)?;
-            render_one(count)?;
+            let frame = opts.source.next()?;
+            if frame.size != image_size {
+                check_texture_size(frame.size).context("the source's new frame size")?;
+                input = new_texture(&device, frame.size, MTLTextureUsage::ShaderRead, "input")?;
+                if opts.verbose {
+                    eprintln!(
+                        "frame size changed from {}x{} to {}x{}",
+                        image_size.width, image_size.height, frame.size.width, frame.size.height
+                    );
+                }
+                image_size = frame.size;
+            }
+            upload(&input, frame)?;
+            render_one(&input, count)?;
             count += 1;
         }
         Ok(())
@@ -412,9 +439,9 @@ mod tests {
                 height: 1
             }
         );
-        let a = src.next().unwrap().to_vec();
+        let a = src.next().unwrap().bgra.to_vec();
         assert_eq!(a, [0, 0, 255, 255, 255, 0, 0, 255]);
-        assert_eq!(src.next().unwrap(), a);
+        assert_eq!(src.next().unwrap().bgra, a);
     }
 
     #[test]

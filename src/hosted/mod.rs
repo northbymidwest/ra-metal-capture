@@ -284,7 +284,7 @@ impl render::FrameSource for CoreWithTemp {
     fn aspect_ratio(&self) -> f64 {
         self.core.aspect_ratio()
     }
-    fn next(&mut self) -> Result<&[u8]> {
+    fn next(&mut self) -> Result<&render::Frame> {
         self.core.next()
     }
 }

@@ -11,7 +11,7 @@ mod env;
 pub(crate) mod pixels;
 mod sys;
 
-pub use env::Frame;
+pub use crate::hosted::render::Frame;
 
 use crate::config::Size;
 use anyhow::{Context as _, Result, bail};
@@ -109,13 +109,14 @@ pub struct Core {
     _lib: Library,
     initialised: bool,
     loaded: bool,
-    /// The base geometry from `load_game`'s `AvInfo`, zero before a game is
-    /// loaded. `run_frame` requires every frame to match this size.
+    /// The base geometry from `load_game`'s `AvInfo`, updated by a
+    /// geometry the core announces mid-run; zero before a game is loaded.
+    /// Frames may come at another size.
     base: Size,
     /// The aspect ratio from the same `AvInfo`, 0 when the core reports none.
     aspect_ratio: f64,
     /// The most recent frame, lent out by `FrameSource::next`.
-    last_frame: Vec<u8>,
+    last_frame: Frame,
 }
 
 /// Resolve every `retro_*` symbol into a `CoreApi`.
@@ -272,7 +273,13 @@ impl Core {
                 height: 0,
             },
             aspect_ratio: 0.0,
-            last_frame: Vec::new(),
+            last_frame: Frame {
+                size: Size {
+                    width: 0,
+                    height: 0,
+                },
+                bgra: Vec::new(),
+            },
         })
     }
 
@@ -508,18 +515,17 @@ impl crate::hosted::render::FrameSource for Core {
             crate::hosted::render::pixel_aspect(self.base)
         }
     }
-    fn next(&mut self) -> Result<&[u8]> {
+    fn next(&mut self) -> Result<&Frame> {
         let frame = self.run_frame()?;
-        if frame.size != self.base {
-            bail!(
-                "the core changed its frame size to {}x{} (base geometry is {}x{}); mid-run geometry changes are not supported",
-                frame.size.width,
-                frame.size.height,
-                self.base.width,
-                self.base.height
-            );
+        // A geometry announced during that frame becomes the new base
+        // (and aspect, if the core gave one), as RetroArch adopts it.
+        if let Some(g) = env::shared().geometry.take() {
+            self.base = g.size;
+            if g.aspect_ratio > 0.0 {
+                self.aspect_ratio = g.aspect_ratio;
+            }
         }
-        self.last_frame = frame.bgra;
+        self.last_frame = frame;
         Ok(&self.last_frame)
     }
 }

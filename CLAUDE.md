@@ -193,7 +193,9 @@ empty by default). The callback also records the defaults a core declares
 through `SET_VARIABLES` or any `SET_CORE_OPTIONS` form and answers
 `GET_VARIABLE` from `--core-options` first and those defaults second,
 never a null value for a registered key: snes9x's `update_variables`
-takes `true` as "a value is present" and would `strcmp` a null. A `Core` is a `render::FrameSource`, which is how
+takes `true` as "a value is present" and would `strcmp` a null. A core's
+frames may change size mid-run; `render::run` re-creates its input
+texture when one does, while the output keeps its boot size. A `Core` is a `render::FrameSource`, which is how
 emulated frames reach the render loop.
 
 `hosted/render/mod.rs` builds BGRA8 textures, loads the preset with
