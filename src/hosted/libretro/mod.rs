@@ -9,16 +9,17 @@
 
 mod env;
 pub(crate) mod pixels;
+mod sys;
 
 pub use env::Frame;
 
 use crate::config::Size;
 use anyhow::{Context as _, Result, bail};
 use libloading::Library;
-use libretro_sys::{CoreAPI, GameInfo, SystemAvInfo, SystemInfo as RawSystemInfo};
 use std::collections::HashMap;
-use std::ffi::{CStr, CString, c_void};
+use std::ffi::{CStr, CString, c_char, c_uint, c_void};
 use std::path::{Path, PathBuf};
+use sys::{retro_game_info, retro_system_av_info, retro_system_info};
 
 /// What the core is told about its surroundings.
 pub struct Context {
@@ -66,9 +67,43 @@ pub struct AvInfo {
     pub fps: f64,
 }
 
+/// The functions a core exports, at the signatures libretro.h declares
+/// (`sys` carries only types, since these are resolved by name from the
+/// dylib rather than linked). Every one is resolved so that a library
+/// missing any of them is refused as not a core, though only some are
+/// called.
+#[allow(dead_code)]
+struct CoreApi {
+    retro_set_environment: unsafe extern "C" fn(sys::retro_environment_t),
+    retro_set_video_refresh: unsafe extern "C" fn(sys::retro_video_refresh_t),
+    retro_set_audio_sample: unsafe extern "C" fn(sys::retro_audio_sample_t),
+    retro_set_audio_sample_batch: unsafe extern "C" fn(sys::retro_audio_sample_batch_t),
+    retro_set_input_poll: unsafe extern "C" fn(sys::retro_input_poll_t),
+    retro_set_input_state: unsafe extern "C" fn(sys::retro_input_state_t),
+    retro_init: unsafe extern "C" fn(),
+    retro_deinit: unsafe extern "C" fn(),
+    retro_api_version: unsafe extern "C" fn() -> c_uint,
+    retro_get_system_info: unsafe extern "C" fn(*mut retro_system_info),
+    retro_get_system_av_info: unsafe extern "C" fn(*mut retro_system_av_info),
+    retro_set_controller_port_device: unsafe extern "C" fn(c_uint, c_uint),
+    retro_reset: unsafe extern "C" fn(),
+    retro_run: unsafe extern "C" fn(),
+    retro_serialize_size: unsafe extern "C" fn() -> usize,
+    retro_serialize: unsafe extern "C" fn(*mut c_void, usize) -> bool,
+    retro_unserialize: unsafe extern "C" fn(*const c_void, usize) -> bool,
+    retro_cheat_reset: unsafe extern "C" fn(),
+    retro_cheat_set: unsafe extern "C" fn(c_uint, bool, *const c_char),
+    retro_load_game: unsafe extern "C" fn(*const retro_game_info) -> bool,
+    retro_load_game_special: unsafe extern "C" fn(c_uint, *const retro_game_info, usize) -> bool,
+    retro_unload_game: unsafe extern "C" fn(),
+    retro_get_region: unsafe extern "C" fn() -> c_uint,
+    retro_get_memory_data: unsafe extern "C" fn(c_uint) -> *mut c_void,
+    retro_get_memory_size: unsafe extern "C" fn(c_uint) -> usize,
+}
+
 /// An open core. Dropping it unloads the game and deinitialises the core.
 pub struct Core {
-    api: CoreAPI,
+    api: CoreApi,
     // Held for the lifetime of `api`'s function pointers; never read.
     // Declared after `api` so the library is closed last.
     _lib: Library,
@@ -83,19 +118,19 @@ pub struct Core {
     last_frame: Vec<u8>,
 }
 
-/// Resolve every `retro_*` symbol into a `CoreAPI`.
+/// Resolve every `retro_*` symbol into a `CoreApi`.
 ///
 /// # Safety
 ///
 /// `lib` must be a libretro core: each symbol is looked up by the name
 /// libretro.h gives it and used at the signature libretro.h declares for
 /// it, and the resolved pointers stay valid only while `lib` is loaded.
-unsafe fn resolve(lib: &Library) -> Result<CoreAPI> {
+unsafe fn resolve(lib: &Library) -> Result<CoreApi> {
     macro_rules! sym {
         ($name:literal) => {{
             // SAFETY: the caller guarantees `lib` is a libretro core, so
             // this name denotes the function libretro.h declares, whose
-            // signature is the `CoreAPI` field this initialises. The
+            // signature is the `CoreApi` field this initialises. The
             // `Symbol` borrow ends here; the copied pointer is valid as
             // long as `lib` stays loaded, which `Core` guarantees.
             let s = unsafe { lib.get(concat!($name, "\0").as_bytes()) }
@@ -103,7 +138,7 @@ unsafe fn resolve(lib: &Library) -> Result<CoreAPI> {
             *s
         }};
     }
-    Ok(CoreAPI {
+    Ok(CoreApi {
         retro_set_environment: sym!("retro_set_environment"),
         retro_set_video_refresh: sym!("retro_set_video_refresh"),
         retro_set_audio_sample: sym!("retro_set_audio_sample"),
@@ -220,11 +255,11 @@ impl Core {
         // retro_init as well. libretro.h does not spell out a pre-init
         // guarantee for it (it does for retro_get_system_info).
         let version = unsafe { (api.retro_api_version)() };
-        if version != libretro_sys::API_VERSION {
+        if version != sys::RETRO_API_VERSION {
             bail!(
                 "{} reports libretro API version {version}; this build speaks version {}",
                 dylib.display(),
-                libretro_sys::API_VERSION
+                sys::RETRO_API_VERSION
             );
         }
         Ok(Core {
@@ -264,12 +299,12 @@ impl Core {
         // and each points at a function in `env` that cannot unwind. `api`
         // came from `_lib`, which is still loaded and outlives this call.
         unsafe {
-            (self.api.retro_set_environment)(env::environment);
-            (self.api.retro_set_video_refresh)(env::video_refresh);
-            (self.api.retro_set_audio_sample)(env::audio_sample);
-            (self.api.retro_set_audio_sample_batch)(env::audio_sample_batch);
-            (self.api.retro_set_input_poll)(env::input_poll);
-            (self.api.retro_set_input_state)(env::input_state);
+            (self.api.retro_set_environment)(Some(env::environment));
+            (self.api.retro_set_video_refresh)(Some(env::video_refresh));
+            (self.api.retro_set_audio_sample)(Some(env::audio_sample));
+            (self.api.retro_set_audio_sample_batch)(Some(env::audio_sample_batch));
+            (self.api.retro_set_input_poll)(Some(env::input_poll));
+            (self.api.retro_set_input_state)(Some(env::input_state));
             (self.api.retro_init)();
         }
         self.initialised = true;
@@ -279,7 +314,7 @@ impl Core {
     /// `retro_get_system_info`, which libretro.h allows at any time, even
     /// before `init`.
     pub fn system_info(&self) -> SystemInfo {
-        let mut raw = RawSystemInfo {
+        let mut raw = retro_system_info {
             library_name: std::ptr::null(),
             library_version: std::ptr::null(),
             valid_extensions: std::ptr::null(),
@@ -335,7 +370,7 @@ impl Core {
             std::fs::read(rom).with_context(|| format!("reading {}", rom.display()))?
         };
         let path = cstring(rom)?;
-        let info = GameInfo {
+        let info = retro_game_info {
             path: path.as_ptr(),
             data: if bytes.is_empty() {
                 std::ptr::null()
@@ -359,15 +394,15 @@ impl Core {
             bail!("the core refused {}", rom.display());
         }
         self.loaded = true;
-        let mut av = SystemAvInfo {
-            geometry: libretro_sys::GameGeometry {
+        let mut av = retro_system_av_info {
+            geometry: sys::retro_game_geometry {
                 base_width: 0,
                 base_height: 0,
                 max_width: 0,
                 max_height: 0,
                 aspect_ratio: 0.0,
             },
-            timing: libretro_sys::SystemTiming {
+            timing: sys::retro_system_timing {
                 fps: 0.0,
                 sample_rate: 0.0,
             },

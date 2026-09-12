@@ -1,0 +1,15 @@
+[package]
+name = "regen-libretro-bindings"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Generates src/hosted/libretro/sys.rs from third_party/libretro/libretro.h; run through scripts/regen-libretro-bindings.sh"
+license = "0BSD"
+
+# Not a member of the main crate's build: this runs bindgen once, by hand,
+# and the checked-in output is what the crate compiles.
+[workspace]
+
+[dependencies]
+bindgen = "0.73.2"
+doxygen-rs = "0.4.2"

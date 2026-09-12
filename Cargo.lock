@@ -895,15 +895,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libretro-sys"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "207b060b02cecbcee6df3d0f5ed38691d5c4df1379dd1acd5c49c9b25d20b439"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "linked-hash-map"
 version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1378,7 +1369,6 @@ dependencies = [
  "image",
  "libloading",
  "librashader",
- "libretro-sys",
  "nix",
  "objc2",
  "objc2-app-kit",

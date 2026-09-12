@@ -2,6 +2,18 @@
 
 Notable changes per release. Dates are the publish date.
 
+## Unreleased
+
+### Changed
+
+- libretro's types and constants are generated from a vendored
+  `libretro.h` (RetroArch 69a4f0ea) by `scripts/regen-libretro-bindings.sh`
+  into `hosted::libretro::sys`, replacing the 2017 `libretro-sys` crate and
+  the structs that had to be mirrored by hand for the commands it
+  predates. The header's per-item comments come through as rustdoc via
+  doxygen-rs; the header itself and the generator are not in the
+  published crate.
+
 ## 0.6.1 - 2026-09-12
 
 ### Fixed

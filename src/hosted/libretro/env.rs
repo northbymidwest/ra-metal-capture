@@ -7,9 +7,9 @@
 //! and any indexing that is not proved in range first, and they recover
 //! from a poisoned lock rather than panicking on it.
 
-use super::pixels::to_bgra;
+use super::pixels::{PixelFormat, to_bgra};
+use super::sys;
 use crate::config::Size;
-use libretro_sys::{PixelFormat, Variable};
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_uint, c_void};
 use std::sync::{LazyLock, Mutex, MutexGuard};
@@ -51,7 +51,7 @@ impl Default for Shared {
             defaults: HashMap::new(),
             // libretro's default when a core never sets one. `PixelFormat`
             // is a foreign type, so it cannot carry its own `Default`.
-            pixel_format: PixelFormat::ARGB1555,
+            pixel_format: PixelFormat::Xrgb1555,
             asked_for_hw_render: false,
             frame: None,
         }
@@ -69,85 +69,16 @@ pub fn shared() -> MutexGuard<'static, Shared> {
 /// Bytes per pixel in a core's framebuffer for each format `to_bgra` reads.
 fn bytes_per_pixel(format: PixelFormat) -> usize {
     match format {
-        PixelFormat::ARGB8888 => 4,
-        PixelFormat::RGB565 | PixelFormat::ARGB1555 => 2,
+        PixelFormat::Xrgb8888 => 4,
+        PixelFormat::Rgb565 | PixelFormat::Xrgb1555 => 2,
     }
 }
 
-// `libretro-sys` 0.1.1 predates the core-options commands and their
-// structs; the values and layouts below are from libretro.h at RetroArch
-// 1.22 (RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION, SET_CORE_OPTIONS,
-// _INTL, _V2, _V2_INTL, and the retro_core_option* structs).
-const ENVIRONMENT_GET_CORE_OPTIONS_VERSION: c_uint = 52;
-const ENVIRONMENT_SET_CORE_OPTIONS: c_uint = 53;
-const ENVIRONMENT_SET_CORE_OPTIONS_INTL: c_uint = 54;
-const ENVIRONMENT_SET_CORE_OPTIONS_V2: c_uint = 67;
-const ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL: c_uint = 68;
 /// The core-options API version this frontend implements, answered to
 /// `GET_CORE_OPTIONS_VERSION`; a core then registers with the v2 form.
 const CORE_OPTIONS_VERSION: c_uint = 2;
-/// `RETRO_NUM_CORE_OPTION_VALUES_MAX`: the inline value array's length.
-pub const NUM_CORE_OPTION_VALUES_MAX: usize = 128;
-
-/// `retro_core_option_value`.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct CoreOptionValue {
-    pub value: *const c_char,
-    pub label: *const c_char,
-}
-
-/// `retro_core_option_definition` (the v1 form).
-#[repr(C)]
-pub struct CoreOptionDefinition {
-    pub key: *const c_char,
-    pub desc: *const c_char,
-    pub info: *const c_char,
-    pub values: [CoreOptionValue; NUM_CORE_OPTION_VALUES_MAX],
-    pub default_value: *const c_char,
-}
-
-/// `retro_core_options_intl`.
-#[repr(C)]
-pub struct CoreOptionsIntl {
-    pub us: *mut CoreOptionDefinition,
-    pub local: *mut CoreOptionDefinition,
-}
-
-/// `retro_core_option_v2_category`; read only to skip past it.
-#[repr(C)]
-pub struct CoreOptionV2Category {
-    pub key: *const c_char,
-    pub desc: *const c_char,
-    pub info: *const c_char,
-}
-
-/// `retro_core_option_v2_definition`.
-#[repr(C)]
-pub struct CoreOptionV2Definition {
-    pub key: *const c_char,
-    pub desc: *const c_char,
-    pub desc_categorized: *const c_char,
-    pub info: *const c_char,
-    pub info_categorized: *const c_char,
-    pub category_key: *const c_char,
-    pub values: [CoreOptionValue; NUM_CORE_OPTION_VALUES_MAX],
-    pub default_value: *const c_char,
-}
-
-/// `retro_core_options_v2`.
-#[repr(C)]
-pub struct CoreOptionsV2 {
-    pub categories: *mut CoreOptionV2Category,
-    pub definitions: *mut CoreOptionV2Definition,
-}
-
-/// `retro_core_options_v2_intl`.
-#[repr(C)]
-pub struct CoreOptionsV2Intl {
-    pub us: *mut CoreOptionsV2,
-    pub local: *mut CoreOptionsV2,
-}
+/// `RETRO_NUM_CORE_OPTION_VALUES_MAX` as a length.
+const NUM_CORE_OPTION_VALUES_MAX: usize = sys::RETRO_NUM_CORE_OPTION_VALUES_MAX as usize;
 
 /// A C string as an owned key or value; None for a null pointer.
 ///
@@ -185,7 +116,7 @@ fn v0_default(value: &CStr) -> CString {
 /// Every non-null pointer is a NUL-terminated string valid for the call.
 unsafe fn definition_default(
     default_value: *const c_char,
-    values: &[CoreOptionValue; NUM_CORE_OPTION_VALUES_MAX],
+    values: &[sys::retro_core_option_value; NUM_CORE_OPTION_VALUES_MAX],
 ) -> Option<CString> {
     // SAFETY: the caller's contract covers both pointers.
     unsafe { owned(default_value).or_else(|| owned(values[0].value)) }
@@ -197,7 +128,7 @@ unsafe fn definition_default(
 /// # Safety
 ///
 /// `list` points at such an array, valid for the call.
-unsafe fn register_v0(s: &mut Shared, mut list: *const Variable) {
+unsafe fn register_v0(s: &mut Shared, mut list: *const sys::retro_variable) {
     // SAFETY: the caller's contract; the walk stops at the null key.
     unsafe {
         while !(*list).key.is_null() {
@@ -215,7 +146,7 @@ unsafe fn register_v0(s: &mut Shared, mut list: *const Variable) {
 /// # Safety
 ///
 /// `list` is null or points at a null-key-terminated array valid for the call.
-unsafe fn register_v1(s: &mut Shared, mut list: *const CoreOptionDefinition) {
+unsafe fn register_v1(s: &mut Shared, mut list: *const sys::retro_core_option_definition) {
     if list.is_null() {
         return;
     }
@@ -237,15 +168,15 @@ unsafe fn register_v1(s: &mut Shared, mut list: *const CoreOptionDefinition) {
 ///
 /// # Safety
 ///
-/// `table` is null or points at a `CoreOptionsV2` whose `definitions` is
+/// `table` is null or points at a `sys::retro_core_options_v2` whose `definitions` is
 /// null or a null-key-terminated array, all valid for the call.
-unsafe fn register_v2(s: &mut Shared, table: *const CoreOptionsV2) {
+unsafe fn register_v2(s: &mut Shared, table: *const sys::retro_core_options_v2) {
     if table.is_null() {
         return;
     }
     // SAFETY: the caller's contract; the walk stops at the null key.
     unsafe {
-        let mut list: *const CoreOptionV2Definition = (*table).definitions;
+        let mut list: *const sys::retro_core_option_v2_definition = (*table).definitions;
         if list.is_null() {
             return;
         }
@@ -261,13 +192,6 @@ unsafe fn register_v2(s: &mut Shared, table: *const CoreOptionsV2) {
     }
 }
 
-// The two flag bits libretro.h can set on a command value:
-// RETRO_ENVIRONMENT_EXPERIMENTAL marks a command whose number is otherwise
-// one of the documented ones, and RETRO_ENVIRONMENT_PRIVATE marks a
-// frontend's own command, whose low bits mean nothing here.
-const ENVIRONMENT_EXPERIMENTAL: c_uint = 0x10000;
-const ENVIRONMENT_PRIVATE: c_uint = 0x20000;
-
 /// The environment callback. Answers exactly what a software-rendered core
 /// needs and `false` to everything else.
 ///
@@ -276,28 +200,24 @@ const ENVIRONMENT_PRIVATE: c_uint = 0x20000;
 /// `data` must be the pointer type libretro.h documents for `cmd`, valid
 /// for the duration of the call. Only a libretro core may call this.
 pub unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
-    use libretro_sys::{
-        ENVIRONMENT_GET_CAN_DUPE, ENVIRONMENT_GET_SAVE_DIRECTORY, ENVIRONMENT_GET_SYSTEM_DIRECTORY,
-        ENVIRONMENT_GET_VARIABLE, ENVIRONMENT_GET_VARIABLE_UPDATE, ENVIRONMENT_SET_HW_RENDER,
-        ENVIRONMENT_SET_PIXEL_FORMAT, ENVIRONMENT_SET_VARIABLES,
-    };
-    // A private command is somebody else's; RetroArch matches full command
-    // values and only ever masks the experimental bit off (runloop.c), so
-    // clearing the private bit too would answer a command we do not know.
-    if cmd & ENVIRONMENT_PRIVATE != 0 {
+    // A private command is somebody else's (RETRO_ENVIRONMENT_PRIVATE marks
+    // a frontend's own); RetroArch matches full command values and only
+    // ever masks the experimental bit off (runloop.c), so clearing the
+    // private bit too would answer a command we do not know.
+    if cmd & sys::RETRO_ENVIRONMENT_PRIVATE != 0 {
         return false;
     }
-    let cmd = cmd & !ENVIRONMENT_EXPERIMENTAL;
+    let cmd = cmd & !sys::RETRO_ENVIRONMENT_EXPERIMENTAL;
     // libretro.h lets a core pass NULL for its option list to declare
     // that it has none; that is acknowledged without reading anything.
     if data.is_null()
         && matches!(
             cmd,
-            ENVIRONMENT_SET_VARIABLES
-                | ENVIRONMENT_SET_CORE_OPTIONS
-                | ENVIRONMENT_SET_CORE_OPTIONS_INTL
-                | ENVIRONMENT_SET_CORE_OPTIONS_V2
-                | ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL
+            sys::RETRO_ENVIRONMENT_SET_VARIABLES
+                | sys::RETRO_ENVIRONMENT_SET_CORE_OPTIONS
+                | sys::RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL
+                | sys::RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2
+                | sys::RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL
         )
     {
         return true;
@@ -306,7 +226,7 @@ pub unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
         // A null `retro_variable*` is a core probing whether this frontend
         // supports core options at all, which RetroArch answers `true`
         // (runloop.c). Every other command below reads or writes `data`.
-        return cmd == ENVIRONMENT_GET_VARIABLE;
+        return cmd == sys::RETRO_ENVIRONMENT_GET_VARIABLE;
     }
     let mut s = shared();
     // SAFETY: the caller guarantees `data` is the type libretro.h documents
@@ -314,43 +234,41 @@ pub unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
     // type and only under its own command, and the null case returned above.
     unsafe {
         match cmd {
-            ENVIRONMENT_GET_CAN_DUPE => {
+            sys::RETRO_ENVIRONMENT_GET_CAN_DUPE => {
                 *(data as *mut bool) = true;
                 true
             }
-            ENVIRONMENT_GET_SYSTEM_DIRECTORY => match &s.system_dir {
+            sys::RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY => match &s.system_dir {
                 Some(d) => {
                     *(data as *mut *const c_char) = d.as_ptr();
                     true
                 }
                 None => false,
             },
-            ENVIRONMENT_GET_SAVE_DIRECTORY => match &s.save_dir {
+            sys::RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY => match &s.save_dir {
                 Some(d) => {
                     *(data as *mut *const c_char) = d.as_ptr();
                     true
                 }
                 None => false,
             },
-            ENVIRONMENT_SET_PIXEL_FORMAT => {
-                let raw = *(data as *const c_uint);
-                let format = match raw {
-                    0 => PixelFormat::ARGB1555,
-                    1 => PixelFormat::ARGB8888,
-                    2 => PixelFormat::RGB565,
-                    _ => return false,
-                };
-                s.pixel_format = format;
-                true
+            sys::RETRO_ENVIRONMENT_SET_PIXEL_FORMAT => {
+                match PixelFormat::from_raw(*(data as *const c_uint)) {
+                    Some(format) => {
+                        s.pixel_format = format;
+                        true
+                    }
+                    None => false,
+                }
             }
-            ENVIRONMENT_GET_VARIABLE => {
+            sys::RETRO_ENVIRONMENT_GET_VARIABLE => {
                 // RetroArch answers every query `true` and says "no such
                 // option" only by leaving the value null (runloop.c), so
                 // that a core can tell a frontend without core-option
                 // support from one that simply has no value to give.
                 // A null key asks for the whole environment string, which
                 // this frontend does not build, so it gets a null value too.
-                let var = &mut *(data as *mut Variable);
+                let var = &mut *(data as *mut sys::retro_variable);
                 var.value = std::ptr::null();
                 if !var.key.is_null() {
                     let key = CStr::from_ptr(var.key).to_string_lossy();
@@ -364,35 +282,38 @@ pub unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
                 }
                 true
             }
-            ENVIRONMENT_GET_CORE_OPTIONS_VERSION => {
+            sys::RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION => {
                 *(data as *mut c_uint) = CORE_OPTIONS_VERSION;
                 true
             }
-            ENVIRONMENT_SET_VARIABLES => {
-                register_v0(&mut s, data as *const Variable);
+            sys::RETRO_ENVIRONMENT_SET_VARIABLES => {
+                register_v0(&mut s, data as *const sys::retro_variable);
                 true
             }
-            ENVIRONMENT_SET_CORE_OPTIONS => {
-                register_v1(&mut s, data as *const CoreOptionDefinition);
+            sys::RETRO_ENVIRONMENT_SET_CORE_OPTIONS => {
+                register_v1(&mut s, data as *const sys::retro_core_option_definition);
                 true
             }
-            ENVIRONMENT_SET_CORE_OPTIONS_INTL => {
-                register_v1(&mut s, (*(data as *const CoreOptionsIntl)).us);
+            sys::RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL => {
+                register_v1(&mut s, (*(data as *const sys::retro_core_options_intl)).us);
                 true
             }
-            ENVIRONMENT_SET_CORE_OPTIONS_V2 => {
-                register_v2(&mut s, data as *const CoreOptionsV2);
+            sys::RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2 => {
+                register_v2(&mut s, data as *const sys::retro_core_options_v2);
                 true
             }
-            ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL => {
-                register_v2(&mut s, (*(data as *const CoreOptionsV2Intl)).us);
+            sys::RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL => {
+                register_v2(
+                    &mut s,
+                    (*(data as *const sys::retro_core_options_v2_intl)).us,
+                );
                 true
             }
-            ENVIRONMENT_GET_VARIABLE_UPDATE => {
+            sys::RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE => {
                 *(data as *mut bool) = false;
                 true
             }
-            ENVIRONMENT_SET_HW_RENDER => {
+            sys::RETRO_ENVIRONMENT_SET_HW_RENDER => {
                 s.asked_for_hw_render = true;
                 false
             }
@@ -496,10 +417,6 @@ pub unsafe extern "C" fn input_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libretro_sys::{
-        ENVIRONMENT_GET_CAN_DUPE, ENVIRONMENT_GET_VARIABLE, ENVIRONMENT_SET_HW_RENDER,
-        ENVIRONMENT_SET_PIXEL_FORMAT, ENVIRONMENT_SET_VARIABLES,
-    };
     use std::ffi::CString;
     use std::sync::{Mutex, MutexGuard};
 
@@ -524,7 +441,7 @@ mod tests {
         let _g = fresh();
         let mut flag = false;
         assert!(env(
-            ENVIRONMENT_GET_CAN_DUPE,
+            sys::RETRO_ENVIRONMENT_GET_CAN_DUPE,
             &mut flag as *mut bool as *mut c_void
         ));
         assert!(flag);
@@ -535,13 +452,13 @@ mod tests {
         let _g = fresh();
         let mut flag = false;
         assert!(env(
-            ENVIRONMENT_GET_CAN_DUPE | ENVIRONMENT_EXPERIMENTAL,
+            sys::RETRO_ENVIRONMENT_GET_CAN_DUPE | sys::RETRO_ENVIRONMENT_EXPERIMENTAL,
             &mut flag as *mut bool as *mut c_void
         ));
         assert!(flag);
         let mut untouched = false;
         assert!(!env(
-            ENVIRONMENT_GET_CAN_DUPE | ENVIRONMENT_PRIVATE,
+            sys::RETRO_ENVIRONMENT_GET_CAN_DUPE | sys::RETRO_ENVIRONMENT_PRIVATE,
             &mut untouched as *mut bool as *mut c_void
         ));
         assert!(!untouched, "a private command must not write through data");
@@ -551,11 +468,11 @@ mod tests {
     fn option_declarations_are_acknowledged_even_with_null_data() {
         let _g = fresh();
         for cmd in [
-            ENVIRONMENT_SET_VARIABLES,
-            ENVIRONMENT_SET_CORE_OPTIONS,
-            ENVIRONMENT_SET_CORE_OPTIONS_INTL,
-            ENVIRONMENT_SET_CORE_OPTIONS_V2,
-            ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL,
+            sys::RETRO_ENVIRONMENT_SET_VARIABLES,
+            sys::RETRO_ENVIRONMENT_SET_CORE_OPTIONS,
+            sys::RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL,
+            sys::RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2,
+            sys::RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL,
         ] {
             assert!(env(cmd, std::ptr::null_mut()), "cmd {cmd}");
         }
@@ -564,13 +481,13 @@ mod tests {
     /// The value the callback answers for `key`, or None for a null value.
     fn lookup(key: &str) -> Option<String> {
         let key = CString::new(key).unwrap();
-        let mut var = Variable {
+        let mut var = sys::retro_variable {
             key: key.as_ptr(),
             value: std::ptr::null(),
         };
         assert!(env(
-            ENVIRONMENT_GET_VARIABLE,
-            &mut var as *mut Variable as *mut c_void
+            sys::RETRO_ENVIRONMENT_GET_VARIABLE,
+            &mut var as *mut sys::retro_variable as *mut c_void
         ));
         if var.value.is_null() {
             None
@@ -585,8 +502,8 @@ mod tests {
         }
     }
 
-    fn no_values() -> [CoreOptionValue; NUM_CORE_OPTION_VALUES_MAX] {
-        [CoreOptionValue {
+    fn no_values() -> [sys::retro_core_option_value; NUM_CORE_OPTION_VALUES_MAX] {
+        [sys::retro_core_option_value {
             value: std::ptr::null(),
             label: std::ptr::null(),
         }; NUM_CORE_OPTION_VALUES_MAX]
@@ -600,21 +517,21 @@ mod tests {
         let k2 = CString::new("snes9x_region").unwrap();
         let v2 = CString::new("Region; auto|ntsc|pal").unwrap();
         let mut list = [
-            Variable {
+            sys::retro_variable {
                 key: k1.as_ptr(),
                 value: v1.as_ptr(),
             },
-            Variable {
+            sys::retro_variable {
                 key: k2.as_ptr(),
                 value: v2.as_ptr(),
             },
-            Variable {
+            sys::retro_variable {
                 key: std::ptr::null(),
                 value: std::ptr::null(),
             },
         ];
         assert!(env(
-            ENVIRONMENT_SET_VARIABLES,
+            sys::RETRO_ENVIRONMENT_SET_VARIABLES,
             list.as_mut_ptr() as *mut c_void
         ));
         assert_eq!(lookup("snes9x_hires_blend").as_deref(), Some("disabled"));
@@ -633,21 +550,21 @@ mod tests {
         values[0].value = x.as_ptr();
         values[1].value = y.as_ptr();
         let mut defs = [
-            CoreOptionDefinition {
+            sys::retro_core_option_definition {
                 key: k1.as_ptr(),
                 desc: std::ptr::null(),
                 info: std::ptr::null(),
                 values,
                 default_value: y.as_ptr(),
             },
-            CoreOptionDefinition {
+            sys::retro_core_option_definition {
                 key: k2.as_ptr(),
                 desc: std::ptr::null(),
                 info: std::ptr::null(),
                 values,
                 default_value: std::ptr::null(),
             },
-            CoreOptionDefinition {
+            sys::retro_core_option_definition {
                 key: std::ptr::null(),
                 desc: std::ptr::null(),
                 info: std::ptr::null(),
@@ -656,7 +573,7 @@ mod tests {
             },
         ];
         assert!(env(
-            ENVIRONMENT_SET_CORE_OPTIONS,
+            sys::RETRO_ENVIRONMENT_SET_CORE_OPTIONS,
             defs.as_mut_ptr() as *mut c_void
         ));
         assert_eq!(lookup("a").as_deref(), Some("y"));
@@ -664,13 +581,13 @@ mod tests {
 
         // The intl form carries the same table under `us`.
         *shared() = Shared::default();
-        let mut intl = CoreOptionsIntl {
+        let mut intl = sys::retro_core_options_intl {
             us: defs.as_mut_ptr(),
             local: std::ptr::null_mut(),
         };
         assert!(env(
-            ENVIRONMENT_SET_CORE_OPTIONS_INTL,
-            &mut intl as *mut CoreOptionsIntl as *mut c_void
+            sys::RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL,
+            &mut intl as *mut sys::retro_core_options_intl as *mut c_void
         ));
         assert_eq!(lookup("a").as_deref(), Some("y"));
     }
@@ -685,7 +602,7 @@ mod tests {
         values[0].value = dis.as_ptr();
         values[1].value = en.as_ptr();
         let mut defs = [
-            CoreOptionV2Definition {
+            sys::retro_core_option_v2_definition {
                 key: k.as_ptr(),
                 desc: std::ptr::null(),
                 desc_categorized: std::ptr::null(),
@@ -695,7 +612,7 @@ mod tests {
                 values,
                 default_value: std::ptr::null(),
             },
-            CoreOptionV2Definition {
+            sys::retro_core_option_v2_definition {
                 key: std::ptr::null(),
                 desc: std::ptr::null(),
                 desc_categorized: std::ptr::null(),
@@ -706,13 +623,13 @@ mod tests {
                 default_value: std::ptr::null(),
             },
         ];
-        let mut v2 = CoreOptionsV2 {
+        let mut v2 = sys::retro_core_options_v2 {
             categories: std::ptr::null_mut(),
             definitions: defs.as_mut_ptr(),
         };
         assert!(env(
-            ENVIRONMENT_SET_CORE_OPTIONS_V2,
-            &mut v2 as *mut CoreOptionsV2 as *mut c_void
+            sys::RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2,
+            &mut v2 as *mut sys::retro_core_options_v2 as *mut c_void
         ));
         assert_eq!(
             lookup("snes9x_up_down_allowed").as_deref(),
@@ -720,13 +637,13 @@ mod tests {
         );
 
         *shared() = Shared::default();
-        let mut intl = CoreOptionsV2Intl {
+        let mut intl = sys::retro_core_options_v2_intl {
             us: &mut v2,
             local: std::ptr::null_mut(),
         };
         assert!(env(
-            ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL,
-            &mut intl as *mut CoreOptionsV2Intl as *mut c_void
+            sys::RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL,
+            &mut intl as *mut sys::retro_core_options_v2_intl as *mut c_void
         ));
         assert_eq!(
             lookup("snes9x_up_down_allowed").as_deref(),
@@ -743,17 +660,17 @@ mod tests {
         let k = CString::new("snes9x_region").unwrap();
         let v = CString::new("Region; auto|ntsc|pal").unwrap();
         let mut list = [
-            Variable {
+            sys::retro_variable {
                 key: k.as_ptr(),
                 value: v.as_ptr(),
             },
-            Variable {
+            sys::retro_variable {
                 key: std::ptr::null(),
                 value: std::ptr::null(),
             },
         ];
         assert!(env(
-            ENVIRONMENT_SET_VARIABLES,
+            sys::RETRO_ENVIRONMENT_SET_VARIABLES,
             list.as_mut_ptr() as *mut c_void
         ));
         assert_eq!(lookup("snes9x_region").as_deref(), Some("pal"));
@@ -764,7 +681,7 @@ mod tests {
         let _g = fresh();
         let mut version: c_uint = 0;
         assert!(env(
-            ENVIRONMENT_GET_CORE_OPTIONS_VERSION,
+            sys::RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION,
             &mut version as *mut c_uint as *mut c_void
         ));
         assert_eq!(version, 2);
@@ -775,8 +692,14 @@ mod tests {
         let _g = fresh();
         let mut flag = false;
         assert!(!env(9999, &mut flag as *mut bool as *mut c_void));
-        assert!(!env(ENVIRONMENT_GET_CAN_DUPE, std::ptr::null_mut()));
-        assert!(env(ENVIRONMENT_GET_VARIABLE, std::ptr::null_mut()));
+        assert!(!env(
+            sys::RETRO_ENVIRONMENT_GET_CAN_DUPE,
+            std::ptr::null_mut()
+        ));
+        assert!(env(
+            sys::RETRO_ENVIRONMENT_GET_VARIABLE,
+            std::ptr::null_mut()
+        ));
     }
 
     #[test]
@@ -786,13 +709,13 @@ mod tests {
             .options
             .insert("sameboy_model".into(), CString::new("Auto").unwrap());
         let key = CString::new("sameboy_model").unwrap();
-        let mut var = Variable {
+        let mut var = sys::retro_variable {
             key: key.as_ptr(),
             value: std::ptr::null(),
         };
         assert!(env(
-            ENVIRONMENT_GET_VARIABLE,
-            &mut var as *mut Variable as *mut c_void
+            sys::RETRO_ENVIRONMENT_GET_VARIABLE,
+            &mut var as *mut sys::retro_variable as *mut c_void
         ));
         // SAFETY: the callback set `value` to a CString it owns in `shared()`.
         assert_eq!(
@@ -801,23 +724,23 @@ mod tests {
         );
 
         let unknown = CString::new("nope").unwrap();
-        let mut var = Variable {
+        let mut var = sys::retro_variable {
             key: unknown.as_ptr(),
             value: key.as_ptr(),
         };
         assert!(env(
-            ENVIRONMENT_GET_VARIABLE,
-            &mut var as *mut Variable as *mut c_void
+            sys::RETRO_ENVIRONMENT_GET_VARIABLE,
+            &mut var as *mut sys::retro_variable as *mut c_void
         ));
         assert!(var.value.is_null());
 
-        let mut var = Variable {
+        let mut var = sys::retro_variable {
             key: std::ptr::null(),
             value: key.as_ptr(),
         };
         assert!(env(
-            ENVIRONMENT_GET_VARIABLE,
-            &mut var as *mut Variable as *mut c_void
+            sys::RETRO_ENVIRONMENT_GET_VARIABLE,
+            &mut var as *mut sys::retro_variable as *mut c_void
         ));
         assert!(var.value.is_null());
     }
@@ -826,23 +749,23 @@ mod tests {
     fn pixel_format_maps_the_three_known_values_and_refuses_others() {
         let _g = fresh();
         for (raw, want) in [
-            (0u32, PixelFormat::ARGB1555),
-            (1, PixelFormat::ARGB8888),
-            (2, PixelFormat::RGB565),
+            (0u32, PixelFormat::Xrgb1555),
+            (1, PixelFormat::Xrgb8888),
+            (2, PixelFormat::Rgb565),
         ] {
             let mut v = raw;
             assert!(env(
-                ENVIRONMENT_SET_PIXEL_FORMAT,
+                sys::RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,
                 &mut v as *mut c_uint as *mut c_void
             ));
             assert_eq!(shared().pixel_format, want);
         }
         let mut v = 7u32;
         assert!(!env(
-            ENVIRONMENT_SET_PIXEL_FORMAT,
+            sys::RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,
             &mut v as *mut c_uint as *mut c_void
         ));
-        assert_eq!(shared().pixel_format, PixelFormat::RGB565, "unchanged");
+        assert_eq!(shared().pixel_format, PixelFormat::Rgb565, "unchanged");
     }
 
     #[test]
@@ -850,7 +773,7 @@ mod tests {
         let _g = fresh();
         let mut anything = 0u32;
         assert!(!env(
-            ENVIRONMENT_SET_HW_RENDER,
+            sys::RETRO_ENVIRONMENT_SET_HW_RENDER,
             &mut anything as *mut c_uint as *mut c_void
         ));
         assert!(shared().asked_for_hw_render);
@@ -859,7 +782,7 @@ mod tests {
     #[test]
     fn video_refresh_copies_a_frame_sized_to_what_the_core_owns() {
         let _g = fresh();
-        shared().pixel_format = PixelFormat::ARGB8888;
+        shared().pixel_format = PixelFormat::Xrgb8888;
         // 2x2 XRGB8888 with a pitch of 12: the last row carries no padding.
         let buf: [u8; 20] = [
             1, 2, 3, 0, 4, 5, 6, 0, 9, 9, 9, 9, // row 0 plus padding
@@ -884,7 +807,7 @@ mod tests {
     #[test]
     fn video_refresh_keeps_the_previous_frame_on_a_dupe_and_drops_bad_geometry() {
         let _g = fresh();
-        shared().pixel_format = PixelFormat::ARGB8888;
+        shared().pixel_format = PixelFormat::Xrgb8888;
         let buf = [0u8; 4];
         // SAFETY: one 1x1 XRGB8888 pixel, pitch 4.
         unsafe { video_refresh(buf.as_ptr() as *const c_void, 1, 1, 4) };
