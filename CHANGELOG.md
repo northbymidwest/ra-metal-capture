@@ -2,6 +2,18 @@
 
 Notable changes per release. Dates are the publish date.
 
+## Unreleased
+
+### Changed
+
+- `cargo xtask libretro update` vendors `libretro.h` at the newest
+  RetroArch commit that changed it and regenerates the bindings, writing
+  the header, its commit hash, and its README together; `regen`
+  regenerates from what is vendored. The `xtask/` workspace member
+  replaces the generator under `tools/` and its shell script.
+- `libretro.h` is vendored at RetroArch `65e1840c` (VFS API v5); nothing
+  this tool uses changed.
+
 ## 0.7.0 - 2026-09-12
 
 ### Added

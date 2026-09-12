@@ -21,10 +21,11 @@ exclude = [
     "/typos.toml",
     "/RELEASING.md",
     "/CLAUDE.md",
-    # The libretro header and the generator that turns it into
+    # The libretro header and the xtask that turns it into
     # src/hosted/libretro/sys.rs; the generated file is what ships.
     "/third_party/",
-    "/tools/",
+    "/xtask/",
+    "/.cargo/",
 ]
 
 # docs.rs builds on Linux; this crate links AppKit through objc2-app-kit,
@@ -53,6 +54,12 @@ librashader = [
     "objc2-foundation/NSError",
     "nix/fs",
 ]
+
+# The maintenance tasks crate (`cargo xtask`), a member so that it shares
+# this lockfile and the supply-chain checks; it is never built by a plain
+# `cargo build` here, since the root package is the default member.
+[workspace]
+members = ["xtask"]
 
 [lib]
 name = "ra_metal_capture"

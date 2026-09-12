@@ -1,0 +1,4 @@
+# `cargo xtask ...`: repository maintenance tasks, implemented in the
+# workspace member under xtask/.
+[alias]
+xtask = "run --quiet --release --package xtask --"

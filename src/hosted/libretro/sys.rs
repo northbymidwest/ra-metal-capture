@@ -1,10 +1,11 @@
 //! libretro's types and constants, generated from
-//! `third_party/libretro/libretro.h` by `scripts/regen-libretro-bindings.sh`.
+//! `third_party/libretro/libretro.h` by `cargo xtask libretro regen`.
 //! The header is RetroArch's `libretro-common/include/libretro.h` at commit
-//! 69a4f0ea1e8aaf442ae4858f2e7f2b31a1776576:
-//! <https://github.com/libretro/RetroArch/blob/69a4f0ea1e8aaf442ae4858f2e7f2b31a1776576/libretro-common/include/libretro.h>
-//! Do not edit; rerun the script after replacing the header. The header's
-//! leading comment, with its license, follows verbatim.
+//! 65e1840c8a8f24d395ff3094026c4323f60e2ffe:
+//! <https://github.com/libretro/RetroArch/blob/65e1840c8a8f24d395ff3094026c4323f60e2ffe/libretro-common/include/libretro.h>
+//! Do not edit; `cargo xtask libretro update` replaces the header and this
+//! file together. The header's leading comment, with its license, follows
+//! verbatim.
 /*
  * libretro.h is a simple API that allows for the creation of games and emulators.
  *
@@ -117,6 +118,7 @@ pub const RETRO_MEMORY_SAVE_RAM: u32 = 0;
 pub const RETRO_MEMORY_RTC: u32 = 1;
 pub const RETRO_MEMORY_SYSTEM_RAM: u32 = 2;
 pub const RETRO_MEMORY_VIDEO_RAM: u32 = 3;
+pub const RETRO_MEMORY_ROM: u32 = 4;
 pub const RETRO_ENVIRONMENT_EXPERIMENTAL: u32 = 65536;
 pub const RETRO_ENVIRONMENT_PRIVATE: u32 = 131072;
 pub const RETRO_ENVIRONMENT_SET_ROTATION: u32 = 1;
@@ -160,9 +162,9 @@ pub const RETRO_ENVIRONMENT_GET_CURRENT_SOFTWARE_FRAMEBUFFER: u32 = 65576;
 pub const RETRO_ENVIRONMENT_GET_HW_RENDER_INTERFACE: u32 = 65577;
 pub const RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS: u32 = 65578;
 pub const RETRO_ENVIRONMENT_SET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE: u32 = 65579;
-pub const RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS: u32 = 44;
 pub const RETRO_ENVIRONMENT_SET_HW_SHARED_CONTEXT: u32 = 65580;
 pub const RETRO_ENVIRONMENT_GET_VFS_INTERFACE: u32 = 65581;
+pub const RETRO_ENVIRONMENT_GET_VFS_AUTHORIZED_LOCATIONS: u32 = 65629;
 pub const RETRO_ENVIRONMENT_GET_LED_INTERFACE: u32 = 65582;
 pub const RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE: u32 = 65583;
 pub const RETRO_ENVIRONMENT_GET_MIDI_INTERFACE: u32 = 65584;
@@ -198,18 +200,54 @@ pub const RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE: u32 = 78;
 pub const RETRO_ENVIRONMENT_GET_PLAYLIST_DIRECTORY: u32 = 79;
 pub const RETRO_ENVIRONMENT_GET_FILE_BROWSER_START_DIRECTORY: u32 = 80;
 pub const RETRO_ENVIRONMENT_GET_TARGET_SAMPLE_RATE: u32 = 65617;
+pub const RETRO_ENVIRONMENT_GET_NETPLAY_CLIENT_INDEX: u32 = 65618;
+pub const RETRO_ENVIRONMENT_EXEC_MEM_ALLOC: u32 = 83;
+pub const RETRO_ENVIRONMENT_EXEC_MEM_FREE: u32 = 84;
+pub const RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT: u32 = 65621;
+pub const RETRO_ENVIRONMENT_GET_MEMORY_STATUS: u32 = 65622;
+pub const RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS: u32 = 87;
+pub const RETRO_ENVIRONMENT_GET_SCREEN_10BPC_CAPABLE: u32 = 65624;
+pub const RETRO_ENVIRONMENT_GET_HDR_PAPER_WHITE_NITS: u32 = 65625;
+pub const RETRO_ENVIRONMENT_GET_HDR_EXPAND_GAMUT: u32 = 65626;
+pub const RETRO_ENVIRONMENT_GET_HDR_OUTPUT_MODE: u32 = 65627;
+pub const RETRO_ENVIRONMENT_GET_HDR_MAX_NITS: u32 = 65628;
+pub const RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_MULTI: u32 = 65630;
+pub const RETRO_AUDIO_SPEAKER_FRONT_LEFT: u32 = 1;
+pub const RETRO_AUDIO_SPEAKER_FRONT_RIGHT: u32 = 2;
+pub const RETRO_AUDIO_SPEAKER_FRONT_CENTER: u32 = 4;
+pub const RETRO_AUDIO_SPEAKER_LOW_FREQUENCY: u32 = 8;
+pub const RETRO_AUDIO_SPEAKER_BACK_LEFT: u32 = 16;
+pub const RETRO_AUDIO_SPEAKER_BACK_RIGHT: u32 = 32;
+pub const RETRO_AUDIO_SPEAKER_FRONT_LEFT_OF_CENTER: u32 = 64;
+pub const RETRO_AUDIO_SPEAKER_FRONT_RIGHT_OF_CENTER: u32 = 128;
+pub const RETRO_AUDIO_SPEAKER_BACK_CENTER: u32 = 256;
+pub const RETRO_AUDIO_SPEAKER_SIDE_LEFT: u32 = 512;
+pub const RETRO_AUDIO_SPEAKER_SIDE_RIGHT: u32 = 1024;
+pub const RETRO_AUDIO_LAYOUT_MONO: u32 = 4;
+pub const RETRO_AUDIO_LAYOUT_STEREO: u32 = 3;
+pub const RETRO_AUDIO_LAYOUT_2_1: u32 = 11;
+pub const RETRO_AUDIO_LAYOUT_QUAD: u32 = 51;
+pub const RETRO_AUDIO_LAYOUT_5_1: u32 = 63;
+pub const RETRO_AUDIO_LAYOUT_5_1_SIDE: u32 = 1551;
+pub const RETRO_AUDIO_LAYOUT_7_1: u32 = 1599;
 pub const RETRO_VFS_FILE_ACCESS_READ: u32 = 1;
 pub const RETRO_VFS_FILE_ACCESS_WRITE: u32 = 2;
 pub const RETRO_VFS_FILE_ACCESS_READ_WRITE: u32 = 3;
 pub const RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING: u32 = 4;
 pub const RETRO_VFS_FILE_ACCESS_HINT_NONE: u32 = 0;
 pub const RETRO_VFS_FILE_ACCESS_HINT_FREQUENT_ACCESS: u32 = 1;
+pub const RETRO_VFS_FILE_ACCESS_HINT_SEQUENTIAL_BULK: u32 = 2;
 pub const RETRO_VFS_SEEK_POSITION_START: u32 = 0;
 pub const RETRO_VFS_SEEK_POSITION_CURRENT: u32 = 1;
 pub const RETRO_VFS_SEEK_POSITION_END: u32 = 2;
 pub const RETRO_VFS_STAT_IS_VALID: u32 = 1;
 pub const RETRO_VFS_STAT_IS_DIRECTORY: u32 = 2;
 pub const RETRO_VFS_STAT_IS_CHARACTER_SPECIAL: u32 = 4;
+pub const RETRO_VFS_STAT_IS_READONLY: u32 = 8;
+pub const RETRO_VFS_COPY_OVERWRITE: u32 = 1;
+pub const RETRO_VFS_COPY_RUNNING: u32 = 0;
+pub const RETRO_VFS_COPY_DONE: u32 = 1;
+pub const RETRO_VFS_COPY_FAILED: i32 = -1;
 pub const RETRO_SERIALIZATION_QUIRK_INCOMPLETE: u32 = 1;
 pub const RETRO_SERIALIZATION_QUIRK_MUST_INITIALIZE: u32 = 2;
 pub const RETRO_SERIALIZATION_QUIRK_CORE_VARIABLE_SIZE: u32 = 4;
@@ -250,6 +288,15 @@ pub const RETRO_SIMD_POPCNT: u32 = 262144;
 pub const RETRO_SIMD_MOVBE: u32 = 524288;
 pub const RETRO_SIMD_CMOV: u32 = 1048576;
 pub const RETRO_SIMD_ASIMD: u32 = 2097152;
+pub const RETRO_SIMD_AVX512: u32 = 4194304;
+pub const RETRO_SIMD_LZCNT: u32 = 8388608;
+pub const RETRO_SIMD_PCLMUL: u32 = 16777216;
+pub const RETRO_SIMD_CRC32: u32 = 33554432;
+pub const RETRO_SIMD_SHA512: u32 = 67108864;
+pub const RETRO_SIMD_SHA1: u32 = 134217728;
+pub const RETRO_SIMD_SHA256: u32 = 268435456;
+pub const RETRO_SIMD_FMA3: u32 = 536870912;
+pub const RETRO_SIMD_FMA4: u32 = 1073741824;
 pub const RETRO_SENSOR_ACCELEROMETER_X: u32 = 0;
 pub const RETRO_SENSOR_ACCELEROMETER_Y: u32 = 1;
 pub const RETRO_SENSOR_ACCELEROMETER_Z: u32 = 2;
@@ -275,6 +322,11 @@ pub const RETRO_THROTTLE_VSYNC: u32 = 5;
 pub const RETRO_THROTTLE_UNBLOCKED: u32 = 6;
 pub const RETRO_MICROPHONE_INTERFACE_VERSION: u32 = 1;
 pub const RETRO_POWERSTATE_NO_ESTIMATE: i32 = -1;
+pub const RETRO_EXEC_MEM_MODE_UNAVAILABLE: u32 = 0;
+pub const RETRO_EXEC_MEM_MODE_UNRESTRICTED: u32 = 1;
+pub const RETRO_EXEC_MEM_MODE_RWX: u32 = 2;
+pub const RETRO_EXEC_MEM_MODE_WX_TOGGLE: u32 = 3;
+pub const RETRO_EXEC_MEM_MODE_DUAL_MAP: u32 = 4;
 #[repr(u32)]
 #[doc = "Identifiers for supported languages.\n\n# See also\n\n> [`RETRO_ENVIRONMENT_GET_LANGUAGE`]\n"]
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
@@ -315,7 +367,8 @@ pub enum retro_language {
     RETRO_LANGUAGE_GALICIAN = 33,
     RETRO_LANGUAGE_NORWEGIAN = 34,
     RETRO_LANGUAGE_IRISH = 35,
-    RETRO_LANGUAGE_LAST = 36,
+    RETRO_LANGUAGE_THAI = 36,
+    RETRO_LANGUAGE_LAST = 37,
     #[doc = "Defined to ensure that <tt>sizeof(retro_language) == sizeof(int)</tt>. Do not use.\n"]
     RETRO_LANGUAGE_DUMMY = 2147483647,
 }
@@ -500,6 +553,15 @@ pub enum retro_mod {
     RETROKMOD_SCROLLOCK = 64,
     RETROKMOD_DUMMY = 2147483647,
 }
+#[doc = "Result of `RETRO_ENVIRONMENT_GET_MEMORY_STATUS.`\n\nSizes are in bytes; a field the frontend cannot determine is left at 0.\n"]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct retro_memory_status {
+    #[doc = "< Physical memory currently available to allocate.\n"]
+    pub free: u64,
+    #[doc = "< Total physical memory installed.\n"]
+    pub total: u64,
+}
 #[doc = "Opaque file handle.\n> **Since** VFS API v1\n"]
 #[repr(C)]
 #[derive(Debug)]
@@ -512,11 +574,17 @@ pub struct retro_vfs_file_handle {
 pub struct retro_vfs_dir_handle {
     _unused: [u8; 0],
 }
+#[doc = "Opaque handle to an in-progress file copy.\n\n# See also\n\n> [`retro_vfs_copy_begin_t`]\n> **Since** VFS API v5\n"]
+#[repr(C)]
+#[derive(Debug)]
+pub struct retro_vfs_copy_handle {
+    _unused: [u8; 0],
+}
 #[doc = "Returns the path that was used to open this file.\n\n# Arguments\n\n* `stream` - The opened file handle to get the path of.\nBehavior is undefined if `NULL` or closed.\n\n# Returns\n\n* The path that was used to open `stream.`\nThe string is owned by `stream` and must not be modified.\n> **Since** VFS API v1\n\n# See also\n\n> [`filestream_get_path`]\n"]
 pub type retro_vfs_get_path_t = ::core::option::Option<
     unsafe extern "C" fn(stream: *mut retro_vfs_file_handle) -> *const ::core::ffi::c_char,
 >;
-#[doc = "Open a file for reading or writing.\n\n# Arguments\n\n* `path` - The path to open.\n* `mode` - A bitwise combination of `RETRO_VFS_FILE_ACCESS` flags.\nAt a minimum, one of `RETRO_VFS_FILE_ACCESS_READ` or `RETRO_VFS_FILE_ACCESS_WRITE` must be specified.\n* `hints` - A bitwise combination of `RETRO_VFS_FILE_ACCESS_HINT` flags.\n\n# Returns\n\n* A handle to the opened file,\nor `NULL` upon failure.\nNote that this will return `NULL` if `path` names a directory.\nThe returned file handle must be closed with `retro_vfs_close_t.`\n> **Since** VFS API v1\n\n# See also\n\n> [`File`] Paths\n> [`RETRO_VFS_FILE_ACCESS`]\n> [`RETRO_VFS_FILE_ACCESS_HINT`]\n> [`retro_vfs_close_t`]\n> [`filestream_open`]\n"]
+#[doc = "Open a file for reading or writing.\n\n# Arguments\n\n* `path` - The path to open.\n* `mode` - A bitwise combination of `RETRO_VFS_FILE_ACCESS` flags.\nAt a minimum, one of `RETRO_VFS_FILE_ACCESS_READ` or `RETRO_VFS_FILE_ACCESS_WRITE` must be specified.\nIf `RETRO_VFS_FILE_ACCESS_WRITE` is specified and `RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING` is not specified,\nand no file or directory exists at `path,` this function will attempt to create an empty file at `path.`\nIf either `RETRO_VFS_FILE_ACCESS_WRITE` is not specified or `RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING` is specified,\nand no file or directory exists at `path,` this function will return `NULL` without attempting to create a file at `path.`\n* `hints` - A bitwise combination of `RETRO_VFS_FILE_ACCESS_HINT` flags.\n\n# Returns\n\n* A handle to the opened file,\nor `NULL` upon failure.\nNote that this will return `NULL` if `path` names a directory.\nThe returned file handle must be closed with `retro_vfs_close_t.`\n> **Since** VFS API v1\n\n# See also\n\n> [`File`] Paths\n> [`RETRO_VFS_FILE_ACCESS`]\n> [`RETRO_VFS_FILE_ACCESS_HINT`]\n> [`retro_vfs_close_t`]\n> [`filestream_open`]\n"]
 pub type retro_vfs_open_t = ::core::option::Option<
     unsafe extern "C" fn(
         path: *const ::core::ffi::c_char,
@@ -538,7 +606,7 @@ pub type retro_vfs_truncate_t = ::core::option::Option<
 #[doc = "Gets the given file's current read/write position.\nThis position is advanced with each call to `retro_vfs_read_t` or `retro_vfs_write_t.`\n\n# Arguments\n\n* `stream` - The file to query the position of.\n\n# Returns\n\n* The current stream position in bytes\nor -1 if there was an error.\n\n# See also\n\n> [`filestream_tell`]\n> **Since** VFS API v1\n"]
 pub type retro_vfs_tell_t =
     ::core::option::Option<unsafe extern "C" fn(stream: *mut retro_vfs_file_handle) -> i64>;
-#[doc = "Sets the given file handle's current read/write position.\n\n# Arguments\n\n* `stream` - The file to set the position of.\n* `offset` - The new position, in bytes.\n* `seek_position` - The position to seek from.\n\n# Returns\n\n* The new position,\nor -1 if there was an error.\n> **Since** VFS API v1\n\n# See also\n\n> [`File`] Seek Positions\n> [`filestream_seek`]\n"]
+#[doc = "Sets the given file handle's current read/write position.\n\n# Arguments\n\n* `stream` - The file to set the position of.\n* `offset` - The new position, in bytes.\n* `seek_position` - The position to seek from.\n\n# Returns\n\n* 0 on success, -1 on failure.\n> **Since** VFS API v1\n\n# See also\n\n> [`File`] Seek Positions\n> [`filestream_seek`]\n"]
 pub type retro_vfs_seek_t = ::core::option::Option<
     unsafe extern "C" fn(
         stream: *mut retro_vfs_file_handle,
@@ -581,6 +649,46 @@ pub type retro_vfs_rename_t = ::core::option::Option<
 pub type retro_vfs_stat_t = ::core::option::Option<
     unsafe extern "C" fn(path: *const ::core::ffi::c_char, size: *mut i32) -> ::core::ffi::c_int,
 >;
+#[doc = "Gets information about the given file (64-bit size).\n\n# Arguments\n\n* `path` - The path to the file to query.\n* `size` \\[out\\] - The reported size of the file in bytes.\nMay be `NULL,` in which case this value is ignored.\n\n# Returns\n\n* A bitmask of `RETRO_VFS_STAT` flags,\nor 0 if `path` doesn't refer to a valid file.\n\n# See also\n\n> [`RETRO_VFS_STAT`]\n> **Since** VFS API v4\n"]
+pub type retro_vfs_stat_64_t = ::core::option::Option<
+    unsafe extern "C" fn(path: *const ::core::ffi::c_char, size: *mut i64) -> ::core::ffi::c_int,
+>;
+#[doc = "Sets or clears the read-only state of a file or directory.\n\nPOSIX: sets or clears the write bits of the mode, leaving the rest intact.\nWindows/UWP: sets or clears `FILE_ATTRIBUTE_READONLY.`\n\n# Arguments\n\n* `path` - The path to the file or directory.\n* `readonly` - Non-zero to make the path read-only,\nzero to make it writable.\n\n# Returns\n\n* 0 on success,\nor -1 if `path` does not exist or the platform or file system\ncannot store a read-only state.\n\n# See also\n\n> [`path_set_readonly`]\n> [`RETRO_VFS_STAT_IS_READONLY`]\n> **Since** VFS API v5\n"]
+pub type retro_vfs_set_readonly_t = ::core::option::Option<
+    unsafe extern "C" fn(
+        path: *const ::core::ffi::c_char,
+        readonly: ::core::ffi::c_int,
+    ) -> ::core::ffi::c_int,
+>;
+#[doc = "Gets the last modification time of a file or directory.\n\n# Arguments\n\n* `path` - The path to the file or directory.\n* `mtime` \\[out\\] - Set to the modification time\nin seconds since 1970-01-01T00:00:00Z. May be negative.\n\n# Returns\n\n* 0 on success,\nor -1 if `path` does not exist or the platform\ncannot report a modification time.\n\n# See also\n\n> [`path_get_mtime`]\n> **Since** VFS API v5\n"]
+pub type retro_vfs_get_mtime_t = ::core::option::Option<
+    unsafe extern "C" fn(path: *const ::core::ffi::c_char, mtime: *mut i64) -> ::core::ffi::c_int,
+>;
+#[doc = "Sets the last modification time of a file or directory.\n\nThe frontend rounds to the file system's resolution,\nso a following `retro_vfs_get_mtime_t` may report a different value.\n\n# Arguments\n\n* `path` - The path to the file or directory.\n* `mtime` - The modification time in seconds since 1970-01-01T00:00:00Z.\n\n# Returns\n\n* 0 on success,\nor -1 if `path` does not exist or the platform or file system\ndoes not allow the modification time to be set.\n\n# See also\n\n> [`path_set_mtime`]\n> **Since** VFS API v5\n"]
+pub type retro_vfs_set_mtime_t = ::core::option::Option<
+    unsafe extern "C" fn(path: *const ::core::ffi::c_char, mtime: i64) -> ::core::ffi::c_int,
+>;
+#[doc = "Starts copying a single regular file and returns without moving any of it.\n\nA copy is a resumable operation that the caller advances with\n`retro_vfs_copy_step_t,` each step bounded by a byte budget the caller\nchooses. The frontend keeps no thread and holds no lock for it; a caller\nthat wants the transfer off its own thread drives the steps from wherever\nit likes. No call in this group ever waits for more than the requested\nstep.\n\n`dst` is the full path of the new file, not a directory; missing parent\ndirectories are created. Metadata (modification time, read-only state)\nof `dst` after the copy is platform-defined. Either path may belong to\nany file system the frontend supports.\n\nChecks that can be made up front (missing or non-regular `src,`\n`dst` is a directory, `dst` exists without `RETRO_VFS_COPY_OVERWRITE,`\n`src` equals `dst)` fail here by returning `NULL.`\n\n# Arguments\n\n* `src` - The path to the file to copy. Must be a regular file.\n* `dst` - The full path of the destination file. Must differ from `src.`\n* `flags` - Bitwise combination of `RETRO_VFS_COPY` flags, or 0.\n\n# Returns\n\n* A handle to poll and close, or `NULL` if the copy could not start.\n\n# See also\n\n> [`retro_vfs_copy_step_t`]\n> [`retro_vfs_copy_close_t`]\n> [`filestream_copy_begin`]\n> [`RETRO_VFS_COPY`]\n> **Since** VFS API v5\n"]
+pub type retro_vfs_copy_begin_t = ::core::option::Option<
+    unsafe extern "C" fn(
+        src: *const ::core::ffi::c_char,
+        dst: *const ::core::ffi::c_char,
+        flags: ::core::ffi::c_uint,
+    ) -> *mut retro_vfs_copy_handle,
+>;
+#[doc = "Advances a copy started with `retro_vfs_copy_begin_t` by at most\n`max_bytes` and reports its state.\n\nThe budget is the caller's latency/throughput dial: a few MiB from a\nframe loop keeps each call short; a very large budget (or repeated calls\nuntil the status leaves `RETRO_VFS_COPY_RUNNING)` runs the transfer at\nthe full speed of the platform's copy primitive with no user-space\nbuffer where the kernel can move the bytes itself.\n\nA step never moves more than `max_bytes,` but it may move less, and it\nmay report `RETRO_VFS_COPY_DONE` early if the platform completed the\ncopy without moving bytes (e.g. a file-system clone).\n\n# Arguments\n\n* `handle` - The copy.\n* `max_bytes` - Upper bound on bytes moved by this call; 0 selects a\nfrontend default sized for a frame loop (a few MiB).\n* `bytes_done` \\[out\\] - Bytes written to `dst` so far. May be `NULL.`\n* `bytes_total` \\[out\\] - Size of `src` in bytes. May be `NULL.`\n\n# Returns\n\n* One of the `RETRO_VFS_COPY_STATUS` values.\n> **Since** VFS API v5\n"]
+pub type retro_vfs_copy_step_t = ::core::option::Option<
+    unsafe extern "C" fn(
+        handle: *mut retro_vfs_copy_handle,
+        max_bytes: i64,
+        bytes_done: *mut i64,
+        bytes_total: *mut i64,
+    ) -> ::core::ffi::c_int,
+>;
+#[doc = "Releases a copy handle.\n\nIf the copy is still running it is cancelled and the partial `dst`\nremoved; nothing is waited for. Must be called exactly once for every\nnon-NULL handle from `retro_vfs_copy_begin_t,` whatever\n`retro_vfs_copy_step_t` reported.\n\n# Arguments\n\n* `handle` - The copy.\n\n# Returns\n\n* 0 if the copy had completed successfully, or -1 if it failed,\nwas cancelled, or was still running when closed.\n> **Since** VFS API v5\n"]
+pub type retro_vfs_copy_close_t = ::core::option::Option<
+    unsafe extern "C" fn(handle: *mut retro_vfs_copy_handle) -> ::core::ffi::c_int,
+>;
 #[doc = "Creates a directory at the given path.\n\n# Arguments\n\n* `dir` - The desired location of the new directory.\n\n# Returns\n\n* 0 if the directory was created,\n-2 if the directory already exists,\nor -1 if some other error occurred.\n\n# See also\n\n> [`path_mkdir`]\n> **Since** VFS API v3\n"]
 pub type retro_vfs_mkdir_t = ::core::option::Option<
     unsafe extern "C" fn(dir: *const ::core::ffi::c_char) -> ::core::ffi::c_int,
@@ -602,6 +710,14 @@ pub type retro_vfs_dirent_get_name_t = ::core::option::Option<
 #[doc = "Checks whether the current dirent names a directory.\n\n# Arguments\n\n* `dirstream` - The directory to read from.\n\n# Returns\n\n* `true` if `dirstream's` current dirent points to a directory,\n`false` if not or if there was an error.\n\n# See also\n\n> [`retro_dirent_is_dir`]\n> **Since** VFS API v3\n"]
 pub type retro_vfs_dirent_is_dir_t =
     ::core::option::Option<unsafe extern "C" fn(dirstream: *mut retro_vfs_dir_handle) -> bool>;
+#[doc = "Gets information about the directory entry most recently returned by\n`retro_vfs_readdir_t,` without opening it or building its path.\n\nOnly valid after a `retro_vfs_readdir_t` call that returned `true,`\nand before the next `retro_vfs_readdir_t` or `retro_vfs_closedir_t`\ncall on the same handle.\n\n# Arguments\n\n* `dirstream` - The directory being enumerated.\n* `size` \\[out\\] - The entry's size in bytes (0 for directories).\nMay be `NULL,` in which case this value is ignored.\n* `mtime` \\[out\\] - The entry's modification time\nin seconds since 1970-01-01T00:00:00Z.\nMay be `NULL,` in which case this value is ignored.\n\n# Returns\n\n* A bitmask of `RETRO_VFS_STAT` flags for the entry\n(`RETRO_VFS_STAT_IS_VALID` is always set on success),\nor 0 if the frontend cannot provide entry information.\n\n# See also\n\n> [`retro_dirent_stat`]\n> [`RETRO_VFS_STAT`]\n> **Since** VFS API v5\n"]
+pub type retro_vfs_dirent_stat_t = ::core::option::Option<
+    unsafe extern "C" fn(
+        dirstream: *mut retro_vfs_dir_handle,
+        size: *mut i64,
+        mtime: *mut i64,
+    ) -> ::core::ffi::c_int,
+>;
 #[doc = "Closes the given directory and release its resources.\n\nMust be called on any `retro_vfs_dir_handle` returned by `retro_vfs_open_t.`\n\n# Arguments\n\n* `dirstream` - The directory to close.\nWhen this function returns (even failure),\n`dirstream` will no longer be valid and must not be used.\n\n# Returns\n\n* 0 on success, -1 on failure.\n\n# See also\n\n> [`retro_closedir`]\n> **Since** VFS API v3\n"]
 pub type retro_vfs_closedir_t = ::core::option::Option<
     unsafe extern "C" fn(dirstream: *mut retro_vfs_dir_handle) -> ::core::ffi::c_int,
@@ -648,6 +764,22 @@ pub struct retro_vfs_interface {
     pub dirent_is_dir: retro_vfs_dirent_is_dir_t,
     #[doc = "@copydoc retro_vfs_closedir_t\n"]
     pub closedir: retro_vfs_closedir_t,
+    #[doc = "@copydoc retro_vfs_stat_64_t\n"]
+    pub stat_64: retro_vfs_stat_64_t,
+    #[doc = "@copydoc retro_vfs_set_readonly_t\n"]
+    pub set_readonly: retro_vfs_set_readonly_t,
+    #[doc = "@copydoc retro_vfs_get_mtime_t\n"]
+    pub get_mtime: retro_vfs_get_mtime_t,
+    #[doc = "@copydoc retro_vfs_set_mtime_t\n"]
+    pub set_mtime: retro_vfs_set_mtime_t,
+    #[doc = "@copydoc retro_vfs_copy_begin_t\n"]
+    pub copy_begin: retro_vfs_copy_begin_t,
+    #[doc = "@copydoc retro_vfs_copy_step_t\n"]
+    pub copy_step: retro_vfs_copy_step_t,
+    #[doc = "@copydoc retro_vfs_copy_close_t\n"]
+    pub copy_close: retro_vfs_copy_close_t,
+    #[doc = "@copydoc retro_vfs_dirent_stat_t\n"]
+    pub dirent_stat: retro_vfs_dirent_stat_t,
 }
 #[doc = "Represents a request by the core for the frontend's file system interface,\nas well as the interface itself returned by the frontend.\n\nYou do not need to use these functions directly;\nyou may pass this struct to `dirent_vfs_init,`\n`filestream_vfs_init,` or `path_vfs_init`\nso that you can use the wrappers provided by these modules.\n\n# See also\n\n> [`dirent_vfs_init`]\n> [`filestream_vfs_init`]\n> [`path_vfs_init`]\n> [`RETRO_ENVIRONMENT_GET_VFS_INTERFACE`]\n"]
 #[repr(C)]
@@ -657,6 +789,21 @@ pub struct retro_vfs_interface_info {
     pub required_interface_version: u32,
     #[doc = "Set by the frontend.\nThe frontend will set this to the VFS interface it provides.\n\nThe interface is owned by the frontend\nand must not be modified or freed by the core.\n> **Since** VFS API v1\n"]
     pub iface: *mut retro_vfs_interface,
+}
+#[doc = "Represents a single frontend-authorized filesystem location.\n\nThe `path` field must be directly usable through the frontend VFS\ninterface, for example saf://... on Android.\n\nThe frontend owns all returned pointers. Cores must copy strings if they\nneed to retain them after the environment callback returns.\n"]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct retro_vfs_authorized_location {
+    pub path: *const ::core::ffi::c_char,
+    pub label: *const ::core::ffi::c_char,
+    pub flags: ::core::ffi::c_uint,
+}
+#[doc = "Represents the list of frontend-authorized filesystem locations.\n\nThis is returned by RETRO_ENVIRONMENT_GET_VFS_AUTHORIZED_LOCATIONS.\n"]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct retro_vfs_authorized_locations {
+    pub locations: *const retro_vfs_authorized_location,
+    pub count: usize,
 }
 #[repr(u32)]
 #[doc = "Describes the hardware rendering API supported by\na particular subtype of `retro_hw_render_interface.`\n\nNot every rendering API supported by libretro has its own interface,\nor even needs one.\n\n# See also\n\n> [`RETRO_ENVIRONMENT_SET_HW_RENDER`]\n> [`RETRO_ENVIRONMENT_GET_HW_RENDER_INTERFACE`]\n"]
@@ -1321,7 +1468,11 @@ pub enum retro_pixel_format {
     RETRO_PIXEL_FORMAT_XRGB8888 = 1,
     #[doc = "RGB565, native endian.\nThis format is recommended if 16-bit pixels are desired,\nas it is available on a variety of devices and APIs.\n"]
     RETRO_PIXEL_FORMAT_RGB565 = 2,
-    #[doc = "Defined to ensure that <tt>sizeof(retro_pixel_format) == sizeof(int)</tt>. Do not use.\n"]
+    #[doc = "XRGB2101010, native endian.\n32-bit packed: 2 ignored high bits followed by 10-bit R, G, B\n(i.e. bits [29:20]=R, [19:10]=G, [9:0]=B; the top 2 bits are ignored).\nIntended for cores that decode 10-bit-per-channel content (e.g. HDR10\nsources) and want to pass it through without narrowing to 8 bits.\n\nA frontend is not required to render this natively: if the active video\ndriver does not support a 10-bit source surface, the frontend transparently\ndown-converts to XRGB8888, so a core may rely on SET_PIXEL_FORMAT accepting\nthis value but should not assume the display path is 10-bit end to end.\n"]
+    RETRO_PIXEL_FORMAT_XRGB2101010 = 3,
+    #[doc = "HDR10: PQ-encoded Rec.2020, 10 bits per channel, native endian.\n\nBit layout is identical to #RETRO_PIXEL_FORMAT_XRGB2101010 -- 2 ignored\nhigh bits then 10-bit R, G, B (bits [29:20]=R, [19:10]=G, [9:0]=B) --\nbut the *encoding* differs, and that is the whole point of a separate\nvalue: the samples are SMPTE ST.2084 (PQ) over Rec.2020 primaries,\ncovering 0..10000 nits absolute, exactly as HDR10 video does.\n\nXRGB2101010 is 10-bit SDR: the frontend treats 1.0 as paper white and\ncannot represent anything brighter, so a core has no way to make a\nhighlight exceed the SDR white level.  With this format the core\nchooses absolute luminance per pixel, so specular highlights, muzzle\nflashes, explosions and emissive surfaces can sit well above paper\nwhite while the rest of the image stays where it was.\n\nA frontend that accepts this format MUST pass the samples through to an\nHDR10 (PQ / Rec.2020) swapchain without re-encoding them: no inverse\ntonemap, no Rec.709->Rec.2020 rotation, no paper-white scaling, since\nthe core has already applied all of it.  A frontend that cannot present\nHDR10 natively must reject the format from SET_PIXEL_FORMAT rather than\nsilently down-converting -- PQ samples interpreted as SDR look badly\nwrong, so the usual transparent narrowing is not safe here.  Cores\nshould therefore keep an SDR path and fall back when this is refused.\n\nCores should query #RETRO_ENVIRONMENT_GET_HDR_PAPER_WHITE_NITS to learn\nthe luminance the user considers \"SDR white\" and map their normal\noutput to it; content authored above that value is what produces the\nHDR effect.\n"]
+    RETRO_PIXEL_FORMAT_HDR10_2101010 = 4,
+    #[doc = "@private Defined to ensure that <tt>sizeof(retro_pixel_format) == sizeof(int)</tt>.\nDo not use.\n"]
     RETRO_PIXEL_FORMAT_UNKNOWN = 2147483647,
 }
 #[repr(u32)]
@@ -1718,6 +1869,28 @@ pub struct retro_device_power {
     #[doc = "The approximate percentage of battery charge,\nranging from 0 to 100 (inclusive).\nThe device may power off before this reaches 0.\n\nThe user might have configured their device\nto stop charging before the battery is full,\nso do not assume that this will be 100 in the `RETRO_POWERSTATE_CHARGED` state.\n"]
     pub percent: i8,
 }
+#[doc = "Parameters for `RETRO_ENVIRONMENT_EXEC_MEM_ALLOC.`\n\nThe core fills in `version` and `size` before calling.\nThe frontend fills in `mode,` `rx,` and `rw` on success.\n\n# See also\n\n> [`RETRO_ENVIRONMENT_EXEC_MEM_ALLOC`]\n"]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct retro_exec_mem_alloc {
+    #[doc = "< Set by core (currently 1).\n"]
+    pub version: ::core::ffi::c_uint,
+    #[doc = "< Set by core: requested bytes.\n"]
+    pub size: usize,
+    #[doc = "< Set by frontend: one of `RETRO_EXEC_MEM_MODE_*.`\n"]
+    pub mode: ::core::ffi::c_uint,
+    #[doc = "< Set by frontend: execute from this pointer.\n"]
+    pub rx: *mut ::core::ffi::c_void,
+    #[doc = "< Set by frontend: write through this pointer.\nEqual to `rx` when mode is RWX or WX_TOGGLE.\n"]
+    pub rw: *mut ::core::ffi::c_void,
+}
+#[doc = "Parameters for `RETRO_ENVIRONMENT_EXEC_MEM_FREE.`\n\n# See also\n\n> [`RETRO_ENVIRONMENT_EXEC_MEM_FREE`]\n"]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct retro_exec_mem_free {
+    #[doc = "< The `rx` pointer returned by a previous alloc call.\nThe matching `rw` pointer is also accepted.\n"]
+    pub rx: *mut ::core::ffi::c_void,
+}
 #[doc = "Environment callback to give implementations a way of performing uncommon tasks.\n\n> **Note** Extensible.\n\n# Arguments\n\n* `cmd` - The command to run.\n* `data` - A pointer to the data associated with the command.\n\n# Returns\n\n* Varies by callback,\nbut will always return `false` if the command is not recognized.\n\n# See also\n\n> [`RETRO_ENVIRONMENT_SET_ROTATION`]\n> [`retro_set_environment()`]\n"]
 pub type retro_environment_t = ::core::option::Option<
     unsafe extern "C" fn(cmd: ::core::ffi::c_uint, data: *mut ::core::ffi::c_void) -> bool,
@@ -1736,9 +1909,42 @@ pub type retro_audio_sample_t = ::core::option::Option<unsafe extern "C" fn(left
 #[doc = "Renders multiple audio frames in one go.\n\n> **Note** Only one of the audio callbacks must ever be used.\n\n# Arguments\n\n* `data` - A pointer to the audio sample data pairs to render.\n* `frames` - The number of frames that are represented in the data. One frame\nis defined as a sample of left and right channels, interleaved.\nFor example: <tt>int16_t buf[4] = { l, r, l, r };</tt> would be 2 frames.\n\n# Returns\n\n* The number of frames that were processed.\n\n# See also\n\n> [`retro_set_audio_sample_batch()`]\n> [`retro_set_audio_sample()`]\n"]
 pub type retro_audio_sample_batch_t =
     ::core::option::Option<unsafe extern "C" fn(data: *const i16, frames: usize) -> usize>;
+#[doc = "Renders multiple audio frames in one go, in float format.\n\nThis is the float counterpart of `retro_audio_sample_batch_t.` It is\nonly valid after the frontend has answered `true` to\n`RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT,` and must not be\nmixed with the int16 callbacks within the same loaded game.\n\n# Arguments\n\n* `data` - A pointer to interleaved stereo float sample frames,\nnormalized to the range [-1.0, 1.0]. One frame is a left/right\npair, e.g. <tt>float buf[4] = { l, r, l, r };</tt> is 2 frames.\n* `frames` - The number of frames represented in `data.`\n\n# Returns\n\n* The number of frames that were processed.\n\n# See also\n\n> [`RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT`]\n> [`retro_audio_sample_batch_t`]\n"]
+pub type retro_audio_sample_batch_float_t =
+    ::core::option::Option<unsafe extern "C" fn(data: *const f32, frames: usize) -> usize>;
+#[doc = "Float audio sample-batch callback handed to the core in response to\n`RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT.`\n\n# See also\n\n> [`RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT`]\n"]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct retro_audio_sample_float_callback {
+    pub batch: retro_audio_sample_batch_float_t,
+}
+#[doc = "Renders multiple audio frames of a multi-channel layout.\n\nValid only after the frontend has answered `true` to\n`RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_MULTI.`\n\n# Arguments\n\n* `data` - Interleaved frames of `channels` samples, one sample\na speaker in the ascending-bit order of `layout;` int16 or\nfloat in [-1.0, 1.0] by the entry point.\n* `frames` - The number of frames in `data.`\n* `channels` - Samples per frame: the bits set in `layout.`\n* `layout` - The speaker mask, from the `RETRO_AUDIO_SPEAKER_` bits.\n\n# Returns\n\n* The number of frames processed; 0 for a layout the frontend\ndoes not take.\n\n# See also\n\n> [`RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_MULTI`]\n"]
+pub type retro_audio_sample_batch_multi_int16_t = ::core::option::Option<
+    unsafe extern "C" fn(
+        data: *const i16,
+        frames: usize,
+        channels: ::core::ffi::c_uint,
+        layout: ::core::ffi::c_uint,
+    ) -> usize,
+>;
+pub type retro_audio_sample_batch_multi_float_t = ::core::option::Option<
+    unsafe extern "C" fn(
+        data: *const f32,
+        frames: usize,
+        channels: ::core::ffi::c_uint,
+        layout: ::core::ffi::c_uint,
+    ) -> usize,
+>;
+#[doc = "Multi-channel batch callbacks handed to the core in response to\n`RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_MULTI.`\n"]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct retro_audio_sample_multi_callback {
+    pub batch_int16: retro_audio_sample_batch_multi_int16_t,
+    pub batch_float: retro_audio_sample_batch_multi_float_t,
+}
 #[doc = "Polls input.\n\n# See also\n\n> [`retro_set_input_poll()`]\n"]
 pub type retro_input_poll_t = ::core::option::Option<unsafe extern "C" fn()>;
-#[doc = "Queries for input for player 'port'.\n\n# Arguments\n\n* `port` - Which player 'port' to query.\n* `device` - Which device to query for. Will be masked with `RETRO_DEVICE_MASK.`\n* `index` - The input index to retrieve.\nThe exact semantics depend on the device type given in `device.`\n* `id` - The ID of which value to query, like `RETRO_DEVICE_ID_JOYPAD_B.`\n\n# Returns\n\n* Depends on the provided arguments,\nbut will return 0 if their values are unsupported\nby the frontend or the backing physical device.\n> **Note** Specialization of devices such as `RETRO_DEVICE_JOYPAD_MULTITAP` that\nhave been set with `retro_set_controller_port_device()` will still use the\nhigher level `RETRO_DEVICE_JOYPAD` to request input.\n\n# See also\n\n> [`retro_set_input_state()`]\n> [`RETRO_DEVICE_NONE`]\n> [`RETRO_DEVICE_JOYPAD`]\n> [`RETRO_DEVICE_MOUSE`]\n> [`RETRO_DEVICE_KEYBOARD`]\n> [`RETRO_DEVICE_LIGHTGUN`]\n> [`RETRO_DEVICE_ANALOG`]\n> [`RETRO_DEVICE_POINTER`]\n"]
+#[doc = "Queries for input for player 'port'.\n\n# Arguments\n\n* `port` - Which player 'port' to query.\n* `device` - Which device to query for. Will be masked with `RETRO_DEVICE_MASK.`\n@warning Poll with a base device ID only; passing an ID created via\n`RETRO_DEVICE_SUBCLASS` is reserved for future definition, and the masking\nnoted above is a frontend convenience that must not be relied upon.\n* `index` - The input index to retrieve.\nThe exact semantics depend on the device type given in `device.`\n* `id` - The ID of which value to query, like `RETRO_DEVICE_ID_JOYPAD_B.`\n\n# Returns\n\n* Depends on the provided arguments,\nbut will return 0 if their values are unsupported\nby the frontend or the backing physical device.\n> **Note** Specialization of devices such as `RETRO_DEVICE_JOYPAD_MULTITAP` that\nhave been set with `retro_set_controller_port_device()` will still use the\nhigher level `RETRO_DEVICE_JOYPAD` to request input.\n\n# See also\n\n> [`retro_set_input_state()`]\n> [`RETRO_DEVICE_NONE`]\n> [`RETRO_DEVICE_JOYPAD`]\n> [`RETRO_DEVICE_MOUSE`]\n> [`RETRO_DEVICE_KEYBOARD`]\n> [`RETRO_DEVICE_LIGHTGUN`]\n> [`RETRO_DEVICE_ANALOG`]\n> [`RETRO_DEVICE_POINTER`]\n"]
 pub type retro_input_state_t = ::core::option::Option<
     unsafe extern "C" fn(
         port: ::core::ffi::c_uint,

@@ -1,0 +1,15 @@
+[package]
+name = "xtask"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Repository maintenance tasks for ra-metal-capture; run as `cargo xtask`"
+license = "0BSD"
+
+[dependencies]
+anyhow = "1"
+bindgen = "0.73.2"
+clap = { version = "4", features = ["derive"] }
+doxygen-bindgen = "0.1.4"
+serde_json = "1"
+ureq = "3"

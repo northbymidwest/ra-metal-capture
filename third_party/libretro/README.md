@@ -1,11 +1,11 @@
 # libretro.h
 
 `libretro.h` is the libretro API header, copied verbatim from RetroArch at
-commit [`69a4f0ea1e8a`](https://github.com/libretro/RetroArch/blob/69a4f0ea1e8aaf442ae4858f2e7f2b31a1776576/libretro-common/include/libretro.h)
-(`libretro-common/include/libretro.h`; the full hash is in `COMMIT`, which
-the generator reads). Its license is in the comment at the top of the file
-and applies to that file only.
+commit [`65e1840c8a8f`](https://github.com/libretro/RetroArch/blob/65e1840c8a8f24d395ff3094026c4323f60e2ffe/libretro-common/include/libretro.h)
+(`libretro-common/include/libretro.h`; the full hash is in `COMMIT`). Its license is in the
+comment at the top of the file and applies to that file only.
 
-`src/hosted/libretro/sys.rs` is generated from it by
-`scripts/regen-libretro-bindings.sh`; after replacing the header, update
-`COMMIT` and this link, then regenerate.
+`src/hosted/libretro/sys.rs` is generated from it. `cargo xtask libretro update` vendors the
+header at the newest commit that changed it and regenerates; `cargo xtask
+libretro regen` regenerates from what is here. This file is written by
+`update`.
