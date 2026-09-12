@@ -2,6 +2,19 @@
 
 Notable changes per release. Dates are the publish date.
 
+## 0.6.1 - 2026-09-12
+
+### Fixed
+
+- A hosted core that reads its options without checking for a null value
+  (snes9x's `update_variables` calls `strcmp` on the result) segfaulted at
+  boot: the environment callback acknowledged the core's option
+  registrations but discarded them, then answered every lookup with a
+  null value. It now records each registered option's default and
+  answers lookups from `--core-options` first and those defaults second,
+  which is what RetroArch does on a fresh config. Verified with snes9x
+  and bsnes. `GET_CORE_OPTIONS_VERSION` is answered too.
+
 ## 0.6.0 - 2026-09-12
 
 ### Added
