@@ -1,8 +1,7 @@
-#![deny(unsafe_code)]
-
 //! The command line: parse arguments, turn them into a backend-neutral
 //! [`Request`], pick a [`Backend`], and run it. Everything about how a
 //! capture is actually made lives in the backends.
+#![deny(unsafe_code)]
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -37,6 +36,7 @@ fn parse_settle(s: &str) -> std::result::Result<f64, String> {
 enum BackendChoice {
     /// Renders a static image or a hosted libretro core through librashader
     /// in this process, recorded with MTLCaptureManager
+    #[cfg(feature = "librashader")]
     Librashader,
     /// Launches RetroArch.app and records its presented frames with gpucapture
     Retroarch,
@@ -63,7 +63,16 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Sub>,
 
+    /// Shader preset (.slangp / .glslp) to render through
+    #[arg(long, required = true)]
+    shader: Option<PathBuf>,
+
+    /// Output .gputrace path
+    #[arg(long, required = true)]
+    output: Option<PathBuf>,
+
     /// Load the ROM even if its extension is not one the core declares
+    #[cfg(feature = "librashader")]
     #[arg(long, requires = "core", help_heading = "librashader backend")]
     skip_extension_check: bool,
 
@@ -116,10 +125,6 @@ struct Cli {
     #[arg(long, requires = "core", conflicts_with = "image")]
     core_options: Option<PathBuf>,
 
-    /// Shader preset (.slangp / .glslp) to render through
-    #[arg(long, required = true)]
-    shader: Option<PathBuf>,
-
     /// retroarch.cfg, consulted only when a bare core name, --slot, or the
     /// system directory is not at RetroArch's default location; nothing
     /// else in it is used by either backend
@@ -164,9 +169,10 @@ struct Cli {
     #[arg(long, default_value_t = 5.0, value_parser = parse_settle, allow_negative_numbers = true)]
     settle: f64,
 
-    /// Frames to run after loading the state; the last one is the first
-    /// recorded (librashader) or the one captured (retroarch). Ignored
-    /// without --state or --slot
+    /// Frames to run after loading the state. librashader: the last one is
+    /// the first recorded. retroarch: the capture is armed after the last
+    /// one and closes a few advances later (the tool prints how many).
+    /// Ignored without --state or --slot
     #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
     advance: u32,
 
@@ -179,10 +185,6 @@ struct Cli {
     /// boundaries to capture (retroarch)
     #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
     frames: u32,
-
-    /// Output .gputrace path
-    #[arg(long, required = true)]
-    output: Option<PathBuf>,
 
     /// Leave RetroArch running after the capture
     #[arg(long, help_heading = "RetroArch backend")]
@@ -210,7 +212,9 @@ enum Sub {
     },
 }
 
-/// Flags that only the RetroArch backend honours, as given on this command line.
+/// Flags that only the RetroArch backend honours, as given on this command
+/// line; consulted by the librashader backend to refuse them.
+#[cfg(feature = "librashader")]
 fn retroarch_only_flags(cli: &Cli) -> Vec<&'static str> {
     let mut given = Vec::new();
     if cli.app.is_some() {
@@ -226,12 +230,29 @@ fn retroarch_only_flags(cli: &Cli) -> Vec<&'static str> {
 }
 
 /// Flags that only the librashader backend honours, as given on this command line.
+#[cfg(feature = "librashader")]
 fn librashader_only_flags(cli: &Cli) -> Vec<&'static str> {
     let mut given = Vec::new();
     if cli.skip_extension_check {
         given.push("--skip-extension-check");
     }
     given
+}
+
+/// A build without the librashader backend has none of its flags.
+#[cfg(not(feature = "librashader"))]
+fn librashader_only_flags(_cli: &Cli) -> Vec<&'static str> {
+    Vec::new()
+}
+
+#[cfg(feature = "librashader")]
+fn skip_extension_check(cli: &Cli) -> bool {
+    cli.skip_extension_check
+}
+
+#[cfg(not(feature = "librashader"))]
+fn skip_extension_check(_cli: &Cli) -> bool {
+    false
 }
 
 impl Cli {
@@ -273,6 +294,7 @@ fn build(cli: Cli) -> Result<(Box<dyn Backend>, Request)> {
                 keep_running: cli.keep_running,
             })
         }
+        #[cfg(feature = "librashader")]
         BackendChoice::Librashader => {
             let ignored = retroarch_only_flags(&cli);
             if !ignored.is_empty() {
@@ -283,7 +305,7 @@ fn build(cli: Cli) -> Result<(Box<dyn Backend>, Request)> {
                     if ignored.len() == 1 { "it" } else { "them" }
                 );
             }
-            hosted_backend()?
+            Box::new(ra_metal_capture::hosted::Hosted)
         }
     };
 
@@ -298,7 +320,7 @@ fn build(cli: Cli) -> Result<(Box<dyn Backend>, Request)> {
                 (None, None) => None,
             },
             options: cli.core_options.clone(),
-            skip_extension_check: cli.skip_extension_check,
+            skip_extension_check: skip_extension_check(&cli),
         },
         // clap requires --image or both --core and --rom.
         _ => bail!("--image, or --core with --rom, is required"),
@@ -319,23 +341,10 @@ fn build(cli: Cli) -> Result<(Box<dyn Backend>, Request)> {
         settle: cli.settle,
         advance: cli.advance,
         output,
-        config: Some(config::expand_tilde(&cli.config.to_string_lossy())),
+        config: Some(config::expand_tilde(&cli.config)),
         verbose: cli.verbose,
     };
     Ok((backend, request))
-}
-
-#[cfg(feature = "librashader")]
-fn hosted_backend() -> Result<Box<dyn Backend>> {
-    Ok(Box::new(ra_metal_capture::hosted::Hosted))
-}
-
-#[cfg(not(feature = "librashader"))]
-fn hosted_backend() -> Result<Box<dyn Backend>> {
-    bail!(
-        "this build has no librashader backend; reinstall with the \"librashader\" \
-         feature (it is on by default)"
-    )
 }
 
 fn main() -> Result<()> {
@@ -551,11 +560,27 @@ mod tests {
             parse_rom(&["--backend", "retroarch"]).unwrap().backend,
             BackendChoice::Retroarch
         );
-        let cli = parse_raw(&["--image", "s.png", "--backend", "librashader"]).unwrap();
-        assert_eq!(cli.backend, BackendChoice::Librashader);
         assert!(parse_raw(&["--image", "s.png", "--backend", "bogus"]).is_err());
     }
 
+    #[cfg(feature = "librashader")]
+    #[test]
+    fn librashader_backend_is_a_value_when_compiled_in() {
+        let cli = parse_raw(&["--image", "s.png", "--backend", "librashader"]).unwrap();
+        assert_eq!(cli.backend, BackendChoice::Librashader);
+    }
+
+    #[cfg(not(feature = "librashader"))]
+    #[test]
+    fn librashader_backend_and_flags_are_absent_without_the_feature() {
+        let err = parse_raw(&["--image", "s.png", "--backend", "librashader"])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("retroarch"), "{err}");
+        assert!(parse_rom(&["--skip-extension-check"]).is_err());
+    }
+
+    #[cfg(feature = "librashader")]
     #[test]
     fn librashader_accepts_core_and_rom_without_image() {
         let cli = parse_raw(&["--backend", "librashader", "--core", "c", "--rom", "r"]).unwrap();
@@ -595,6 +620,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "librashader")]
     #[test]
     fn backend_only_flags_are_detected() {
         let cli = parse_rom(&["--app", "/x", "--cmd-port", "1", "--keep-running"]).unwrap();
@@ -603,6 +629,11 @@ mod tests {
             ["--app", "--cmd-port", "--keep-running"]
         );
         assert!(librashader_only_flags(&cli).is_empty());
+    }
+
+    #[cfg(feature = "librashader")]
+    #[test]
+    fn librashader_only_flags_are_detected() {
         let cli = parse_rom(&["--core-options", "o", "--skip-extension-check"]).unwrap();
         assert_eq!(librashader_only_flags(&cli), ["--skip-extension-check"]);
         assert!(retroarch_only_flags(&cli).is_empty());
@@ -662,6 +693,7 @@ mod tests {
         assert_eq!(request.source, Source::Image(PathBuf::from("i.png")));
     }
 
+    #[cfg(feature = "librashader")]
     #[test]
     fn build_rejects_librashader_only_flags_under_retroarch() {
         let cli = parse_rom(&["--backend", "retroarch", "--skip-extension-check"]).unwrap();
@@ -671,17 +703,17 @@ mod tests {
 
     #[test]
     fn build_passes_core_options_to_either_backend() {
-        for backend in ["retroarch", "librashader"] {
+        #[cfg(feature = "librashader")]
+        let backends = ["retroarch", "librashader"];
+        #[cfg(not(feature = "librashader"))]
+        let backends = ["retroarch"];
+        for backend in backends {
             let cli = parse_rom(&["--backend", backend, "--core-options", "o.opt"]).unwrap();
-            match build(cli) {
-                Ok((_, request)) => assert!(matches!(
-                    request.source,
-                    Source::Core { options: Some(ref o), .. } if o == &PathBuf::from("o.opt")
-                )),
-                // A build without the feature refuses the librashader backend
-                // for another reason entirely.
-                Err(err) => assert!(err.to_string().contains("this build"), "{err}"),
-            }
+            let (_, request) = build(cli).unwrap();
+            assert!(matches!(
+                request.source,
+                Source::Core { options: Some(ref o), .. } if o == &PathBuf::from("o.opt")
+            ));
         }
     }
 
@@ -699,14 +731,5 @@ mod tests {
         let err = build(cli).err().expect("an error").to_string();
         assert!(err.contains("--app, --keep-running"), "{err}");
         assert!(err.contains("--backend retroarch"), "{err}");
-    }
-
-    #[cfg(not(feature = "librashader"))]
-    #[test]
-    fn build_refuses_librashader_without_the_feature() {
-        let cli =
-            parse_raw(&["--image", "fixtures/sample.png", "--backend", "librashader"]).unwrap();
-        let err = build(cli).err().expect("an error").to_string();
-        assert!(err.contains("librashader"), "{err}");
     }
 }

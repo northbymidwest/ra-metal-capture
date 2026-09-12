@@ -3,15 +3,16 @@
 //! `retroarch::runconfig`.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Expand a leading `~` or `~/` using `$HOME`. Other paths are returned unchanged.
-pub fn expand_tilde(s: &str) -> PathBuf {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    match (s, home) {
-        ("~", Some(home)) => home,
-        (s, Some(home)) if s.starts_with("~/") => home.join(&s[2..]),
-        (s, _) => PathBuf::from(s),
+pub fn expand_tilde(path: &Path) -> PathBuf {
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+        return path.to_path_buf();
+    };
+    match path.strip_prefix("~") {
+        Ok(rest) => home.join(rest),
+        Err(_) => path.to_path_buf(),
     }
 }
 
@@ -117,17 +118,20 @@ impl std::fmt::Display for Aspect {
     }
 }
 
-/// How the output is sized: RetroArch's window, or the hosted backend's
-/// texture (see `render::output_size` for the pixel mapping).
+/// How the output is sized, shared by both backends. The RetroArch backend
+/// turns it into window settings in `retroarch::runconfig` (sizes there
+/// are points, and the viewport letterboxes inside the window); the
+/// hosted backend maps it to an output texture in pixels with
+/// `hosted::render::output_size`, which is that viewport.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WindowMode {
-    /// Windowed, scaled up and then clamped to this maximum (points).
+    /// Scaled up as far as this maximum allows (points).
     Fill { max: Size },
-    /// Windowed, exactly this size (points).
+    /// Exactly this size (points for RetroArch, pixels for the hosted backend).
     Exact(Size),
-    /// Windowed, an integer multiple of the core's native resolution, unclamped.
+    /// An integer multiple of the source's native size, unclamped (points).
     Scale(u32),
-    /// `-f` on the command line; nothing in the config.
+    /// The whole main display.
     Fullscreen,
 }
 
@@ -206,9 +210,11 @@ mod tests {
     #[test]
     fn expands_tilde_prefix() {
         let home = std::env::var("HOME").unwrap();
-        assert_eq!(expand_tilde("~/a/b"), PathBuf::from(format!("{home}/a/b")));
-        assert_eq!(expand_tilde("~"), PathBuf::from(&home));
-        assert_eq!(expand_tilde("/abs"), PathBuf::from("/abs"));
-        assert_eq!(expand_tilde("rel/~x"), PathBuf::from("rel/~x"));
+        let tilde = |s: &str| expand_tilde(Path::new(s));
+        assert_eq!(tilde("~/a/b"), PathBuf::from(format!("{home}/a/b")));
+        assert_eq!(tilde("~"), PathBuf::from(&home));
+        assert_eq!(tilde("/abs"), PathBuf::from("/abs"));
+        assert_eq!(tilde("rel/~x"), PathBuf::from("rel/~x"));
+        assert_eq!(tilde("~x/y"), PathBuf::from("~x/y"));
     }
 }

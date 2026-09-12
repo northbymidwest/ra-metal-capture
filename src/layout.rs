@@ -23,10 +23,14 @@ impl RetroArchDirs {
     /// RetroArch's macOS defaults, with states sorted into per-core folders.
     pub fn defaults() -> RetroArchDirs {
         RetroArchDirs {
-            libretro_dir: config::expand_tilde("~/Library/Application Support/RetroArch/cores"),
-            system_dir: config::expand_tilde("~/Documents/RetroArch/system"),
+            libretro_dir: config::expand_tilde(Path::new(
+                "~/Library/Application Support/RetroArch/cores",
+            )),
+            system_dir: config::expand_tilde(Path::new("~/Documents/RetroArch/system")),
             states: state::StateDirs {
-                savestate_directory: config::expand_tilde("~/Documents/RetroArch/states"),
+                savestate_directory: config::expand_tilde(Path::new(
+                    "~/Documents/RetroArch/states",
+                )),
                 sort_by_core: true,
                 sort_by_content: false,
                 in_content_dir: false,
@@ -41,7 +45,7 @@ impl RetroArchDirs {
         let base = RetroArchDirs::defaults();
         let dir = |key: &str, default: PathBuf| {
             keys.get(key)
-                .map(|s| config::expand_tilde(s))
+                .map(|s| config::expand_tilde(Path::new(s)))
                 .unwrap_or(default)
         };
         let flag = |key: &str, default: bool| keys.get(key).map(|v| v == "true").unwrap_or(default);
