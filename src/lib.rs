@@ -13,8 +13,9 @@
 //! its own process: a static image or a hosted libretro core
 //! (`hosted::libretro`) is fed through the preset by librashader's Metal
 //! runtime (`hosted::render`),
-//! and the trace is written with Metal's capture API. `state` decodes
-//! RetroArch save states for that path. No RetroArch process is involved.
+//! and the trace is written with Metal's capture API. `hosted::state`
+//! decodes RetroArch save states for that path. No RetroArch process is
+//! involved.
 //!
 //! The RetroArch backend, selected with `--backend retroarch`, assembles a
 //! [`retroarch::launch::LaunchPlan`] and an
@@ -36,7 +37,6 @@
 pub mod backend;
 pub mod bundle;
 pub mod config;
-pub mod core;
 pub mod display;
 #[cfg(feature = "librashader")]
 pub mod hosted;

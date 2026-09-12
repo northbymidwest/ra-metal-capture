@@ -112,10 +112,11 @@ impl Backend for RetroArch {
         let paused = match state {
             Some(StateSource::File(state_file)) => {
                 let dir = tmp.path().join("states");
-                let slot = state::stage(&state_file, &content, &dir)?;
+                state::stage(&state_file, &content, &dir)?;
                 Some(PausedConfig {
                     port: self.cmd_port,
-                    slot,
+                    // `stage` writes the file under slot 0's name.
+                    slot: 0,
                     states: state::StateDirs {
                         savestate_directory: dir,
                         sort_by_core: false,

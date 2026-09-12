@@ -181,6 +181,12 @@ mod tests {
     }
 
     #[test]
+    fn read_all_splits_on_the_first_equals_only() {
+        let m = read_all("video_shader = \"a=b.slangp\"\n");
+        assert_eq!(m.get("video_shader").unwrap(), "a=b.slangp");
+    }
+
+    #[test]
     fn reads_quoted_values_and_skips_comments_and_blank_lines() {
         let text = "# comment\n\nvideo_driver = \"vulkan\"\nlibretro_directory = \"~/cores\"\n";
         let m = read_all(text);

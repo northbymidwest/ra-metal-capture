@@ -4,8 +4,8 @@
 //! when a default candidate is missing. Both backends resolve through
 //! here, and this is the only use either makes of the user's config.
 
-use crate::{config, core, state};
-use anyhow::{Result, bail};
+use crate::{config, state};
+use anyhow::{Result, anyhow, bail};
 use std::path::{Path, PathBuf};
 
 /// Where RetroArch keeps the things a hosted core needs. The values come
@@ -63,6 +63,14 @@ impl RetroArchDirs {
             },
         }
     }
+}
+
+/// The core a bare `arg` names inside `dir`: `<dir>/<arg>` or
+/// `<dir>/<arg>_libretro.dylib`, whichever exists.
+fn core_in(dir: &Path, arg: &str) -> Option<PathBuf> {
+    [dir.join(arg), dir.join(format!("{arg}_libretro.dylib"))]
+        .into_iter()
+        .find(|p| p.is_file())
 }
 
 /// What [`DirResolver::locate`] found.
@@ -174,9 +182,10 @@ impl<'a> DirResolver<'a> {
         match self.locate(
             "core",
             |d| d.libretro_dir.clone(),
-            |dir| core::resolve_core(core_arg, dir).is_ok(),
+            |dir| core_in(dir, core_arg).is_some(),
         ) {
-            Located::Found(dir) => core::resolve_core(core_arg, &dir),
+            Located::Found(dir) => core_in(&dir, core_arg)
+                .ok_or_else(|| anyhow!("core {core_arg} vanished from {}", dir.display())),
             Located::Missing(tried) => {
                 bail!("core {core_arg} not found in {}", describe_tried(&tried))
             }
@@ -192,7 +201,7 @@ impl<'a> DirResolver<'a> {
             Located::Missing(tried) => tried
                 .into_iter()
                 .next()
-                .unwrap_or_else(|| RetroArchDirs::defaults().system_dir),
+                .expect("locate always tries the default layout first"),
         }
     }
 }
@@ -400,5 +409,35 @@ mod tests {
         assert_eq!(settle_frames(5.0, 59.728), 299);
         assert_eq!(settle_frames(5.0, 0.0), 300);
         assert_eq!(settle_frames(0.0, 59.728), 0);
+    }
+
+    #[test]
+    fn core_in_finds_a_bare_name_or_a_file_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let core = tmp.path().join("sameboy_libretro.dylib");
+        std::fs::write(&core, b"").unwrap();
+        assert_eq!(core_in(tmp.path(), "sameboy"), Some(core.clone()));
+        assert_eq!(core_in(tmp.path(), "sameboy_libretro.dylib"), Some(core));
+        assert_eq!(core_in(tmp.path(), "nope"), None);
+    }
+
+    #[test]
+    fn core_path_that_exists_is_used_directly() {
+        let tmp = tempfile::tempdir().unwrap();
+        let core = tmp.path().join("x_libretro.dylib");
+        std::fs::write(&core, b"").unwrap();
+        let mut dirs = DirResolver::new(RetroArchDirs::defaults(), || None, false);
+        assert_eq!(dirs.core(core.to_str().unwrap()).unwrap(), core);
+    }
+
+    #[test]
+    fn unknown_core_errors_listing_what_was_tried() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut defaults = RetroArchDirs::defaults();
+        defaults.libretro_dir = tmp.path().to_path_buf();
+        let mut dirs = DirResolver::new(defaults, || None, false);
+        let err = dirs.core("nope").unwrap_err().to_string();
+        assert!(err.contains("nope"), "{err}");
+        assert!(err.contains(tmp.path().to_str().unwrap()), "{err}");
     }
 }

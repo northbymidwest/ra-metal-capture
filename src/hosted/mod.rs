@@ -4,11 +4,12 @@
 
 pub mod libretro;
 pub mod render;
+pub mod state;
 
 use crate::backend::{Backend, Request, Source, StateSource};
 use crate::config::{self, Size};
 use crate::layout::{DirResolver, Located, describe_tried, settle_frames};
-use crate::{bundle, display, image_file, interrupt, preset, state};
+use crate::{bundle, display, image_file, interrupt, preset};
 use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -91,42 +92,46 @@ impl Backend for Hosted {
         interrupt::install();
         let screen = display::main_screen();
 
-        let mut stdout: Option<StdoutToStderr> = None;
-        let (source, warmup): (Box<dyn render::FrameSource>, u32) = match source {
-            Source::Image(image) => {
-                validate_image(&image)?;
-                (Box::new(render::ImageSource::open(&image)?), 0)
-            }
-            Source::Core {
-                core,
-                rom,
-                state,
-                options,
-                skip_extension_check,
-            } => {
-                libretro::refuse_zip(&rom)?;
-                if !rom.is_file() {
-                    bail!("ROM not found at {}", rom.display());
+        // The frame source, its warm-up, and the saved stdout when a core
+        // (which may print) is hosted.
+        let (source, warmup, stdout): (Box<dyn render::FrameSource>, u32, Option<StdoutToStderr>) =
+            match source {
+                Source::Image(image) => {
+                    validate_image(&image)?;
+                    (Box::new(render::ImageSource::open(&image)?), 0, None)
                 }
-                let mut dirs = DirResolver::for_config(config.as_deref(), verbose);
-                let run = CoreRun {
-                    core_path: dirs.core(&core)?,
+                Source::Core {
+                    core,
                     rom,
                     state,
-                    options: read_options(options.as_deref())?,
+                    options,
                     skip_extension_check,
-                    system_dir: dirs.system_dir(),
-                    settle,
-                    advance,
-                    verbose,
-                };
-                // A hosted core may print to stdout; keep that off the stream
-                // this tool reports the output path on.
-                stdout = Some(StdoutToStderr::redirect()?);
-                let (core, warmup) = boot_core(run, &mut dirs)?;
-                (Box::new(core), warmup)
-            }
-        };
+                } => {
+                    // Refused here for an early message, and again inside
+                    // `Core::load_game` as the library's own guard.
+                    libretro::refuse_zip(&rom)?;
+                    if !rom.is_file() {
+                        bail!("ROM not found at {}", rom.display());
+                    }
+                    let mut dirs = DirResolver::for_config(config.as_deref(), verbose);
+                    let run = CoreRun {
+                        core_path: dirs.core(&core)?,
+                        rom,
+                        state,
+                        options: read_options(options.as_deref())?,
+                        skip_extension_check,
+                        system_dir: dirs.system_dir(),
+                        settle,
+                        advance,
+                        verbose,
+                    };
+                    // A hosted core may print to stdout; keep that off the stream
+                    // this tool reports the output path on.
+                    let stdout = StdoutToStderr::redirect()?;
+                    let (core, warmup) = boot_core(run, &mut dirs)?;
+                    (Box::new(core), warmup, Some(stdout))
+                }
+            };
 
         render::run(render::RenderOptions {
             source,
@@ -139,8 +144,8 @@ impl Backend for Hosted {
             output: output.clone(),
             verbose,
         })?;
-        match stdout.as_mut() {
-            Some(original) => original.print_line(&output.display().to_string())?,
+        match stdout {
+            Some(mut original) => original.print_line(&output.display().to_string())?,
             None => println!("{}", output.display()),
         }
         Ok(())
@@ -207,7 +212,7 @@ fn boot_core(run: CoreRun, dirs: &mut DirResolver) -> Result<(CoreWithTemp, u32)
         Some(StateSource::File(p)) => Some(p.clone()),
         Some(StateSource::Slot(n)) => match dirs.locate(
             "save state slot",
-            |d| state::slot_path(&d.states, &info.library_name, &run.rom, *n),
+            |d| crate::state::slot_path(&d.states, &info.library_name, &run.rom, *n),
             |p| p.is_file(),
         ) {
             Located::Found(p) => Some(p),
@@ -318,7 +323,8 @@ mod tests {
     use super::*;
     use crate::config::WindowMode;
 
-    fn request(source: Source, shader: &str) -> Request {
+    /// A request writing into `dir`, so no test touches a real path.
+    fn request(source: Source, shader: &str, dir: &Path) -> Request {
         Request {
             source,
             shader: PathBuf::from(shader),
@@ -328,7 +334,7 @@ mod tests {
             frames: 1,
             settle: 5.0,
             advance: 1,
-            output: PathBuf::from("/tmp/x.gputrace"),
+            output: dir.join("x.gputrace"),
             overwrite: false,
             config: None,
             verbose: false,
@@ -337,10 +343,12 @@ mod tests {
 
     #[test]
     fn refuses_a_missing_shader_before_touching_metal() {
+        let tmp = tempfile::tempdir().unwrap();
         let err = Hosted
             .run(request(
                 Source::Image(PathBuf::from("fixtures/sample.png")),
                 "/nonexistent/p.slangp",
+                tmp.path(),
             ))
             .unwrap_err()
             .to_string();
@@ -349,6 +357,7 @@ mod tests {
 
     #[test]
     fn refuses_a_zip_before_loading_anything() {
+        let tmp = tempfile::tempdir().unwrap();
         let err = Hosted
             .run(request(
                 Source::Core {
@@ -359,6 +368,7 @@ mod tests {
                     skip_extension_check: false,
                 },
                 "Cargo.toml",
+                tmp.path(),
             ))
             .unwrap_err()
             .to_string();

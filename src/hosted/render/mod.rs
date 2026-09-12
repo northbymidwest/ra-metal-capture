@@ -1,9 +1,10 @@
 //! The librashader backend: render an image through a preset inside this
 //! process and write the `.gputrace` with Metal's capture API. Sizing is
 //! pure and tested; everything that touches Metal lives in [`run`] and
-//! [`Trace`], and is exercised only by a real run. This is the one module
-//! in the crate that allows `unsafe`, for the Metal calls objc2 cannot
-//! prove safe (descriptor construction and the byte upload).
+//! [`Trace`], and is exercised only by a real run. This and
+//! `hosted::libretro` are the two modules that allow `unsafe`; here it is
+//! for the Metal calls objc2 cannot prove safe (descriptor construction
+//! and the byte upload).
 //!
 //! Under `MTL_CAPTURE_ENABLED=1` the device Metal hands back is a capture
 //! proxy class that does not statically declare every `MTLDevice` selector.

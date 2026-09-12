@@ -206,8 +206,9 @@ impl Core {
 
     /// The part of `open` that runs with the claim held.
     fn dlopen(dylib: &Path) -> Result<Core> {
-        // SAFETY: loading a libretro core runs its constructors, which the
-        // API contract keeps side-effect free until retro_init.
+        // SAFETY: loading the library runs its constructors. libretro.h
+        // does not promise anything about them; this tool assumes, as
+        // RetroArch does, that a core does nothing before retro_init.
         let lib = unsafe { Library::new(dylib) }
             .with_context(|| format!("loading core {}", dylib.display()))?;
         // SAFETY: `lib` was just dlopened from the path the caller named as

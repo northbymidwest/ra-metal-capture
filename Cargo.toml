@@ -37,7 +37,19 @@ no-default-features = true
 default = ["librashader"]
 # The in-process image backend: librashader's Metal runtime plus Metal's
 # capture API. Without it the tool is RetroArch-only and builds no C++.
-librashader = ["dep:librashader", "dep:objc2", "dep:objc2-metal", "dep:image", "dep:libretro-sys", "dep:libloading", "dep:flate2"]
+librashader = [
+    "dep:librashader",
+    "dep:objc2",
+    "dep:objc2-metal",
+    "dep:image",
+    "dep:libretro-sys",
+    "dep:libloading",
+    "dep:flate2",
+    "objc2-foundation/NSString",
+    "objc2-foundation/NSURL",
+    "objc2-foundation/NSError",
+    "nix/fs",
+]
 
 [lib]
 name = "ra_metal_capture"
@@ -51,9 +63,9 @@ path = "src/main.rs"
 anyhow = "1.0.104"
 clap = { version = "4.6.6", features = ["derive"] }
 tempfile = "3.27.0"
-nix = { version = "0.31.3", features = ["signal", "fs"] }
+nix = { version = "0.31.3", features = ["signal"] }
 ctrlc = "3.5.2"
-objc2-foundation = { version = "0.3.2", features = ["NSGeometry", "NSString", "NSURL", "NSError"] }
+objc2-foundation = { version = "0.3.2", features = ["NSGeometry"] }
 objc2-app-kit = { version = "0.3.2", features = ["NSScreen"] }
 # librashader backend (feature "librashader")
 librashader = { version = "0.12.0", optional = true, default-features = false, features = ["runtime-metal", "presets", "preprocess"] }
