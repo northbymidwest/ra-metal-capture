@@ -12,12 +12,13 @@ pub fn is_gputrace_bundle(path: &Path) -> bool {
         && path.join("index").exists()
 }
 
-/// Make room for a new capture at `output`. A previous bundle is removed;
-/// anything else that exists there is refused, so a mistyped path never
+/// Make room for a new capture at `output`. A previous bundle there is
+/// refused unless `overwrite`, in which case it is removed; anything else
+/// that exists there is refused either way, so a mistyped path never
 /// deletes user data. A path in a directory that does not exist is
 /// refused here, before anything is rendered, rather than by Metal at the
 /// end of the run.
-pub fn prepare_output(output: &Path) -> Result<()> {
+pub fn prepare_output(output: &Path, overwrite: bool) -> Result<()> {
     if !output.exists() {
         if let Some(dir) = output.parent()
             && !dir.as_os_str().is_empty()
@@ -30,6 +31,12 @@ pub fn prepare_output(output: &Path) -> Result<()> {
     if !is_gputrace_bundle(output) {
         bail!(
             "{} exists and is not a .gputrace bundle; refusing to overwrite it",
+            output.display()
+        );
+    }
+    if !overwrite {
+        bail!(
+            "{} already exists; pass --overwrite to replace it",
             output.display()
         );
     }
@@ -76,9 +83,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("docs");
         std::fs::create_dir_all(&dir).unwrap();
-        let err = prepare_output(&dir).unwrap_err().to_string();
+        let err = prepare_output(&dir, false).unwrap_err().to_string();
         assert!(err.contains("docs"), "{err}");
         assert!(dir.exists(), "must not delete a non-bundle directory");
+        assert!(
+            prepare_output(&dir, true).is_err(),
+            "--overwrite only covers bundles"
+        );
+        assert!(dir.exists());
     }
 
     #[test]
@@ -102,20 +114,24 @@ mod tests {
     fn prepare_output_refuses_a_missing_parent_directory() {
         let tmp = tempfile::tempdir().unwrap();
         let out = tmp.path().join("missing").join("x.gputrace");
-        let err = prepare_output(&out).unwrap_err().to_string();
+        let err = prepare_output(&out, false).unwrap_err().to_string();
         assert!(err.contains("output directory"), "{err}");
         assert!(err.contains("missing"), "{err}");
-        prepare_output(Path::new("relative.gputrace")).unwrap();
+        prepare_output(Path::new("relative.gputrace"), false).unwrap();
     }
 
     #[test]
-    fn prepare_output_removes_a_stale_bundle_and_tolerates_absence() {
+    fn prepare_output_keeps_an_existing_bundle_unless_overwriting() {
         let tmp = tempfile::tempdir().unwrap();
         let bundle = tmp.path().join("old.gputrace");
         std::fs::create_dir_all(&bundle).unwrap();
         std::fs::write(bundle.join("index"), b"").unwrap();
-        prepare_output(&bundle).unwrap();
+        let err = prepare_output(&bundle, false).unwrap_err().to_string();
+        assert!(err.contains("--overwrite"), "{err}");
+        assert!(bundle.exists());
+        prepare_output(&bundle, true).unwrap();
         assert!(!bundle.exists());
-        prepare_output(&tmp.path().join("new.gputrace")).unwrap();
+        prepare_output(&tmp.path().join("new.gputrace"), true).unwrap();
+        prepare_output(&tmp.path().join("new.gputrace"), false).unwrap();
     }
 }

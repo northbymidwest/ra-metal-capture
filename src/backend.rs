@@ -57,6 +57,8 @@ pub struct Request {
     pub advance: u32,
     /// Absolute path of the `.gputrace` to write.
     pub output: PathBuf,
+    /// Replace a bundle already at `output`; without it one is refused.
+    pub overwrite: bool,
     /// A `retroarch.cfg` to consult when a path inferred from RetroArch's
     /// default layout is missing. That is the only use either backend
     /// makes of it. `None` means consult nothing, as on a machine without

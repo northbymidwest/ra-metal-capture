@@ -71,6 +71,10 @@ struct Cli {
     #[arg(long, required = true)]
     output: Option<PathBuf>,
 
+    /// Replace a .gputrace bundle already at --output instead of refusing
+    #[arg(long)]
+    overwrite: bool,
+
     /// Load the ROM even if its extension is not one the core declares
     #[cfg(feature = "librashader")]
     #[arg(long, requires = "core", help_heading = "librashader backend")]
@@ -341,6 +345,7 @@ fn build(cli: Cli) -> Result<(Box<dyn Backend>, Request)> {
         settle: cli.settle,
         advance: cli.advance,
         output,
+        overwrite: cli.overwrite,
         config: Some(config::expand_tilde(&cli.config)),
         verbose: cli.verbose,
     };
@@ -438,6 +443,12 @@ mod tests {
         assert_eq!(cli.param[1].value, 2.5);
         assert!(parse_rom(&["--param", "A"]).is_err());
         assert!(parse_rom(&[]).unwrap().param.is_empty());
+    }
+
+    #[test]
+    fn overwrite_is_off_by_default() {
+        assert!(!parse_rom(&[]).unwrap().overwrite);
+        assert!(parse_rom(&["--overwrite"]).unwrap().overwrite);
     }
 
     #[test]

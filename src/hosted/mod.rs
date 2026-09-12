@@ -55,6 +55,7 @@ impl Backend for Hosted {
             settle,
             advance,
             output,
+            overwrite,
             config,
             verbose,
         } = request;
@@ -86,7 +87,7 @@ impl Backend for Hosted {
             None => preset,
         };
         // Refuse a bad output path before loading anything.
-        bundle::prepare_output(&output)?;
+        bundle::prepare_output(&output, overwrite)?;
         interrupt::install();
         let screen = display::main_screen();
 
@@ -328,6 +329,7 @@ mod tests {
             settle: 5.0,
             advance: 1,
             output: PathBuf::from("/tmp/x.gputrace"),
+            overwrite: false,
             config: None,
             verbose: false,
         }

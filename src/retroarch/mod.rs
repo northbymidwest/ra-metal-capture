@@ -213,6 +213,7 @@ impl Backend for RetroArch {
             trigger,
             frames: request.frames,
             output: request.output.clone(),
+            overwrite: request.overwrite,
             keep_running: self.keep_running,
             ready_timeout: Duration::from_secs(30),
             log_path: tmp.path().join("retroarch.log"),
@@ -254,6 +255,7 @@ mod tests {
             settle: 5.0,
             advance: 1,
             output: PathBuf::from("/tmp/x.gputrace"),
+            overwrite: false,
             config: None,
             verbose: false,
         }

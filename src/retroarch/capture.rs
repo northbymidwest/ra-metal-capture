@@ -111,6 +111,8 @@ pub struct CaptureOptions {
     pub frames: u32,
     /// Absolute path of the `.gputrace` to write.
     pub output: PathBuf,
+    /// Replace a bundle already at `output`; without it one is refused.
+    pub overwrite: bool,
     /// Leave RetroArch running after the capture.
     pub keep_running: bool,
     /// How long to wait for the PID to appear in `gpucapture list`.
@@ -439,7 +441,7 @@ fn capture_settled(guard: &mut ChildGuard, frames: u32, output: &Path) -> Result
 
 /// Launch RetroArch, wait until it is capturable, run the trigger, capture, terminate.
 pub fn run(cmd: &LaunchCommand, opts: &CaptureOptions) -> Result<()> {
-    prepare_output(&opts.output)?;
+    prepare_output(&opts.output, opts.overwrite)?;
     // The path is ours from here on, so whatever a failed run leaves at
     // it (a bundle gpucapture started, complete or not) is removed once,
     // on every error path, including an interrupt.
