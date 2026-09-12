@@ -9,7 +9,7 @@ use ra_metal_capture::backend::{Backend, Interrupted, Request, Source, StateSour
 use ra_metal_capture::config::{self, Aspect, Size, WindowMode};
 use ra_metal_capture::display;
 use ra_metal_capture::preset::Param;
-use ra_metal_capture::retroarch::RetroArch;
+use ra_metal_capture::retroarch::{DEFAULT_APP, DEFAULT_CMD_PORT, RetroArch};
 use std::path::PathBuf;
 
 /// The most `--settle` accepts, in seconds. Above this the value is a
@@ -80,9 +80,13 @@ struct Cli {
     #[arg(long, requires = "core", help_heading = "librashader backend")]
     skip_extension_check: bool,
 
-    /// RetroArch .app bundle, or the binary inside it
-    /// [default: /Applications/RetroArch.app]
-    #[arg(long, help_heading = "RetroArch backend")]
+    // An Option, not a default_value: "not given" is what lets the
+    // librashader backend refuse a RetroArch-only flag (see `build`).
+    #[arg(
+        long,
+        help_heading = "RetroArch backend",
+        help = format!("RetroArch .app bundle, or the binary inside it [default: {DEFAULT_APP}]")
+    )]
     app: Option<PathBuf>,
 
     /// Path to a libretro .dylib, or a bare name resolved in RetroArch's
@@ -180,9 +184,13 @@ struct Cli {
     #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
     advance: u32,
 
-    /// UDP port for RetroArch's command interface, enabled only for this
-    /// run [default: 55355]
-    #[arg(long, help_heading = "RetroArch backend")]
+    #[arg(
+        long,
+        help_heading = "RetroArch backend",
+        help = format!(
+            "UDP port for RetroArch's command interface, enabled only for this run [default: {DEFAULT_CMD_PORT}]"
+        )
+    )]
     cmd_port: Option<u16>,
 
     /// Consecutive emulated frames to record (librashader) or frame
@@ -209,9 +217,10 @@ enum Sub {
     /// which gpucapture needs to attach to it; the RetroArch backend cannot
     /// capture an app without it. Repeat after a RetroArch update
     Entitle {
-        /// RetroArch .app bundle, or the binary inside it
-        /// [default: /Applications/RetroArch.app]
-        #[arg(long)]
+        #[arg(
+            long,
+            help = format!("RetroArch .app bundle, or the binary inside it [default: {DEFAULT_APP}]")
+        )]
         app: Option<PathBuf>,
     },
 }

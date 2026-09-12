@@ -35,11 +35,16 @@ pub struct RetroArch {
     pub keep_running: bool,
 }
 
+/// Where a stock RetroArch install puts its app; the `--app` default.
+pub const DEFAULT_APP: &str = "/Applications/RetroArch.app";
+/// RetroArch's own default for `network_cmd_port`; the `--cmd-port` default.
+pub const DEFAULT_CMD_PORT: u16 = 55355;
+
 impl Default for RetroArch {
     fn default() -> Self {
         RetroArch {
-            app: PathBuf::from("/Applications/RetroArch.app"),
-            cmd_port: 55355,
+            app: PathBuf::from(DEFAULT_APP),
+            cmd_port: DEFAULT_CMD_PORT,
             keep_running: false,
         }
     }
