@@ -14,8 +14,10 @@ in), or launch RetroArch.app and capture its presented frames with Apple's
 renders either a static image (`--image FILE`) or a software-rendered
 libretro core hosted in this same process (`--core` and `--rom`, with
 `--state` or `--slot` to restore a RetroArch save state).
-Requires macOS 27 and Xcode 27 at run time. Published on crates.io as
-`ra-metal-capture`.
+`ra-metal-capture entitle [--app PATH]` re-signs a RetroArch.app ad hoc
+with `com.apple.security.get-task-allow`, which `gpucapture` needs and
+libretro's builds lack. Requires macOS 27 and Xcode 27 at run time.
+Published on crates.io as `ra-metal-capture`.
 
 ## Commands
 
@@ -79,6 +81,11 @@ The same command with `--backend retroarch` launches
   crashed or disconnected". Every launch passes `--sram-mode
   noload-nosave` so RetroArch never touches `.srm`/`.rtc` files. A
   `--state` file is copied into the temp dir rather than loaded in place.
+- `--shader` and `--output` are `Option` fields with `required = true`
+  in `src/main.rs`, not plain `PathBuf`s: clap's `subcommand_negates_reqs`
+  waives them for `entitle`, and the derive cannot fill a non-`Option`
+  field that is absent. Turning them back into `PathBuf` breaks the
+  subcommand while every capture test still passes.
 - `deny.toml` lists exactly the licenses the tree uses with
   `unused-allowed-license = "deny"`; adding or dropping a dependency may
   require editing that list.
@@ -100,6 +107,13 @@ port, keep-running) or `hosted::Hosted`. `prepare` runs first (the hosted
 backend re-execs with `MTL_CAPTURE_ENABLED=1`), then `run`, which prints
 the bundle path as its last act. Main knows nothing about launch plans,
 cores, or Metal.
+
+`retroarch/entitle.rs` is the `entitle` subcommand: `codesign -d` to read
+the entitlements, an ad-hoc `codesign --force --sign -` with a one-key
+plist when `get-task-allow` is missing, and a re-read to confirm.
+`capture::parse_listing` keeps the `[non-debuggable]` marker from
+`gpucapture list`, and `wait_capturable` fails at once, naming the app
+and the command, when RetroArch is listed without it.
 
 `retroarch/mod.rs` assembles a `launch::LaunchPlan` plus a
 `runconfig::RunConfig`, renders the run config to a temp dir, builds a

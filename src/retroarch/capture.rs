@@ -5,6 +5,7 @@
 use super::launch::LaunchCommand;
 use super::remote::Remote;
 use crate::bundle::{discard_partial, prepare_output};
+use crate::interrupt;
 use anyhow::{Context, Result, bail};
 use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
@@ -15,12 +16,28 @@ use std::process::{Child, Command, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-/// PIDs listed by `gpucapture list`: every line whose first word parses
-/// as a number. The header line's first word is `PID`, which does not.
-pub fn parse_capturable_pids(list_output: &str) -> Vec<u32> {
+/// One row of `gpucapture list`: a pid, and whether `gpucapture` can attach
+/// to it. A process without the `get-task-allow` entitlement is listed with
+/// a `[non-debuggable]` marker and cannot be captured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Listed {
+    pub pid: u32,
+    pub debuggable: bool,
+}
+
+/// The rows of `gpucapture list`: every line whose first word parses as a
+/// number. The header line's first word is `PID`, which does not, and the
+/// footer explaining debuggability starts with a word.
+pub fn parse_listing(list_output: &str) -> Vec<Listed> {
     list_output
         .lines()
-        .filter_map(|line| line.split_whitespace().next()?.parse().ok())
+        .filter_map(|line| {
+            let pid = line.split_whitespace().next()?.parse().ok()?;
+            Some(Listed {
+                pid,
+                debuggable: !line.contains("[non-debuggable]"),
+            })
+        })
         .collect()
 }
 
@@ -70,6 +87,7 @@ impl Drop for ChildGuard {
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
+        interrupt::clear_child();
     }
 }
 
@@ -99,6 +117,9 @@ pub struct CaptureOptions {
     pub ready_timeout: Duration,
     /// Where RetroArch's stdout and stderr are written.
     pub log_path: PathBuf,
+    /// The app as the user named it, for the error when it is not
+    /// entitled for capture.
+    pub app: PathBuf,
 }
 
 fn log_tail(path: &Path) -> String {
@@ -108,7 +129,7 @@ fn log_tail(path: &Path) -> String {
     lines[start..].join("\n")
 }
 
-fn gpucapture_list() -> Result<Vec<u32>> {
+fn gpucapture_list() -> Result<Vec<Listed>> {
     let out = Command::new("gpucapture")
         .arg("list")
         .output()
@@ -120,21 +141,37 @@ fn gpucapture_list() -> Result<Vec<u32>> {
             String::from_utf8_lossy(&out.stderr).trim()
         );
     }
-    Ok(parse_capturable_pids(&String::from_utf8_lossy(&out.stdout)))
+    Ok(parse_listing(&String::from_utf8_lossy(&out.stdout)))
 }
 
-fn wait_capturable(guard: &mut ChildGuard, timeout: Duration, log_path: &Path) -> Result<()> {
+fn wait_capturable(
+    guard: &mut ChildGuard,
+    timeout: Duration,
+    log_path: &Path,
+    app: &Path,
+) -> Result<()> {
     let deadline = Instant::now() + timeout;
     let pid = guard.pid();
     loop {
+        interrupt::check()?;
         if let Some(status) = guard.poll()? {
             bail!(
                 "RetroArch exited ({status}) before becoming capturable. Last log lines:\n{}",
                 log_tail(log_path)
             );
         }
-        if gpucapture_list()?.contains(&pid) {
-            return Ok(());
+        if let Some(row) = gpucapture_list()?.into_iter().find(|row| row.pid == pid) {
+            if row.debuggable {
+                return Ok(());
+            }
+            bail!(
+                "`gpucapture list` shows pid {pid} as non-debuggable: {} is not signed with \
+                 {}, so gpucapture cannot attach to it. Run `ra-metal-capture entitle --app {}` \
+                 once (see the README), then retry",
+                app.display(),
+                super::entitle::ENTITLEMENT,
+                app.display()
+            );
         }
         if Instant::now() >= deadline {
             bail!(
@@ -195,13 +232,25 @@ fn gpucapture_start(pid: u32, frames: u32, output: &Path, on_armed: impl FnOnce(
         bail!("`gpucapture start` failed with {status}");
     }
     if !output.join("index").exists() {
-        discard_partial(output);
         bail!(
             "`gpucapture start` succeeded but {} has no `index` entry; the bundle looks incomplete and was removed",
             output.display()
         );
     }
     Ok(())
+}
+
+/// Sleep for `settle`, in ticks, so a RetroArch that dies or a Ctrl-C
+/// during the wait is noticed within a tick rather than at its end.
+fn settle_wait(guard: &mut ChildGuard, settle: Duration, log_path: &Path) -> Result<()> {
+    let deadline = Instant::now() + settle;
+    while Instant::now() < deadline {
+        interrupt::check()?;
+        bail_if_exited(guard, "during settle", log_path)?;
+        sleep(Duration::from_millis(100).min(deadline - Instant::now()));
+    }
+    interrupt::check()?;
+    bail_if_exited(guard, "during settle", log_path)
 }
 
 fn bail_if_exited(guard: &mut ChildGuard, when: &str, log_path: &Path) -> Result<()> {
@@ -270,11 +319,22 @@ fn capture_paused(
     // failure sub-cases below kill it first: on `Timeout` to stop it
     // waiting for a boundary that will never come, and on `Disconnected`
     // as cleanup, since the thread has already finished by then.
-    match armed_rx.recv_timeout(ARM_TIMEOUT) {
+    let arm_deadline = Instant::now() + ARM_TIMEOUT;
+    let armed = loop {
+        if let Err(e) = interrupt::check() {
+            guard.kill_now();
+            let _ = capture.join();
+            return Err(e);
+        }
+        match armed_rx.recv_timeout(Duration::from_millis(100)) {
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) if Instant::now() < arm_deadline => {}
+            other => break other,
+        }
+    };
+    match armed {
         Ok(()) => {}
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
             guard.kill_now();
-            discard_partial(output);
             let _ = capture.join();
             bail!("gpucapture did not report it was armed within {ARM_TIMEOUT:?}");
         }
@@ -284,7 +344,6 @@ fn capture_paused(
             // propagate its actual error instead of reporting a timeout
             // that did not happen.
             guard.kill_now();
-            discard_partial(output);
             match capture.join() {
                 Ok(Ok(())) => {
                     bail!("gpucapture exited before reporting it was armed")
@@ -302,6 +361,11 @@ fn capture_paused(
     let max_closing = frames + MAX_CLOSING_ADVANCES;
     let mut closing = 0;
     while !capture.is_finished() {
+        if let Err(e) = interrupt::check() {
+            guard.kill_now();
+            let _ = capture.join();
+            return Err(e);
+        }
         if closing == max_closing {
             // The cap may have been reached while gpucapture is still
             // flushing the bundle to disk; give it a grace period before
@@ -312,7 +376,6 @@ fn capture_paused(
             }
             if !capture.is_finished() {
                 guard.kill_now();
-                discard_partial(output);
                 let _ = capture.join();
                 bail!(
                     "capture did not complete after {max_closing} frame advances \
@@ -324,7 +387,6 @@ fn capture_paused(
         }
         if let Err(e) = remote.frame_advance() {
             guard.kill_now();
-            discard_partial(output);
             let _ = capture.join();
             return Err(e.context("advancing a frame to close the capture; RetroArch was killed to release gpucapture"));
         }
@@ -355,10 +417,14 @@ fn capture_settled(guard: &mut ChildGuard, frames: u32, output: &Path) -> Result
     let timeout = settle_capture_timeout(frames);
     let deadline = Instant::now() + timeout;
     while !capture.is_finished() {
+        if let Err(e) = interrupt::check() {
+            guard.kill_now();
+            let _ = capture.join();
+            return Err(e);
+        }
         if Instant::now() >= deadline {
             guard.kill_now();
             let _ = capture.join();
-            discard_partial(output);
             bail!(
                 "the capture did not finish within {timeout:?}; RetroArch was killed to release gpucapture"
             );
@@ -371,29 +437,20 @@ fn capture_settled(guard: &mut ChildGuard, frames: u32, output: &Path) -> Result
     }
 }
 
-/// The pid of the RetroArch this process launched, for the Ctrl-C handler;
-/// 0 when there is none.
-static LAUNCHED_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-static CTRLC_HANDLER: std::sync::Once = std::sync::Once::new();
-
-/// Kill the launched RetroArch on SIGINT or SIGTERM and exit 130. The drop
-/// guard covers every return and unwind; this covers the signal that
-/// skips both, so an interrupted run leaves no process behind either.
-fn install_ctrlc_handler() {
-    CTRLC_HANDLER.call_once(|| {
-        let _ = ctrlc::set_handler(|| {
-            let pid = LAUNCHED_PID.load(std::sync::atomic::Ordering::SeqCst);
-            if pid != 0 {
-                let _ = kill(Pid::from_raw(pid as i32), Signal::SIGKILL);
-            }
-            std::process::exit(130);
-        });
-    });
-}
-
 /// Launch RetroArch, wait until it is capturable, run the trigger, capture, terminate.
 pub fn run(cmd: &LaunchCommand, opts: &CaptureOptions) -> Result<()> {
     prepare_output(&opts.output)?;
+    // The path is ours from here on, so whatever a failed run leaves at
+    // it (a bundle gpucapture started, complete or not) is removed once,
+    // on every error path, including an interrupt.
+    let result = launch_and_capture(cmd, opts);
+    if result.is_err() {
+        discard_partial(&opts.output);
+    }
+    result
+}
+
+fn launch_and_capture(cmd: &LaunchCommand, opts: &CaptureOptions) -> Result<()> {
     let log = File::create(&opts.log_path)
         .with_context(|| format!("creating {}", opts.log_path.display()))?;
     let log_err = log.try_clone().context("cloning log handle")?;
@@ -406,17 +463,16 @@ pub fn run(cmd: &LaunchCommand, opts: &CaptureOptions) -> Result<()> {
         .with_context(|| format!("launching {}", cmd.program.display()))?;
     let mut guard = ChildGuard { child, armed: true };
     let pid = guard.pid();
-    install_ctrlc_handler();
-    LAUNCHED_PID.store(pid, std::sync::atomic::Ordering::SeqCst);
+    interrupt::install();
+    interrupt::register_child(pid);
     eprintln!("launched RetroArch as pid {pid}");
 
-    wait_capturable(&mut guard, opts.ready_timeout, &opts.log_path)?;
+    wait_capturable(&mut guard, opts.ready_timeout, &opts.log_path, &opts.app)?;
 
     let remote = match opts.trigger {
         Trigger::Settle(settle) => {
             eprintln!("pid {pid} is capturable; settling for {settle:?}");
-            sleep(settle);
-            bail_if_exited(&mut guard, "during settle", &opts.log_path)?;
+            settle_wait(&mut guard, settle, &opts.log_path)?;
             capture_settled(&mut guard, opts.frames, &opts.output)?;
             None
         }
@@ -433,7 +489,6 @@ pub fn run(cmd: &LaunchCommand, opts: &CaptureOptions) -> Result<()> {
 
     if opts.keep_running {
         guard.armed = false;
-        LAUNCHED_PID.store(0, std::sync::atomic::Ordering::SeqCst);
         return Ok(());
     }
     if let Some(remote) = remote {
@@ -449,7 +504,6 @@ pub fn run(cmd: &LaunchCommand, opts: &CaptureOptions) -> Result<()> {
         }
     }
     guard.terminate(Duration::from_secs(3));
-    LAUNCHED_PID.store(0, std::sync::atomic::Ordering::SeqCst);
     Ok(())
 }
 
@@ -466,12 +520,37 @@ mod tests {
     #[test]
     fn parses_pids_from_first_column() {
         let out = "    PID  Device  Name  GPU(ms)  \n  12084       0  loop     0.02  \n  99  0  RetroArch  1.0\n";
-        assert_eq!(parse_capturable_pids(out), vec![12084, 99]);
+        assert_eq!(
+            parse_listing(out),
+            vec![
+                Listed {
+                    pid: 12084,
+                    debuggable: true
+                },
+                Listed {
+                    pid: 99,
+                    debuggable: true
+                }
+            ]
+        );
     }
 
     #[test]
     fn empty_and_header_only_give_nothing() {
-        assert!(parse_capturable_pids("").is_empty());
-        assert!(parse_capturable_pids("    PID  Device  Name  GPU(ms)  \n").is_empty());
+        assert!(parse_listing("").is_empty());
+        assert!(parse_listing("    PID  Device  Name  GPU(ms)  \n").is_empty());
+    }
+
+    #[test]
+    fn non_debuggable_row_is_listed_but_not_debuggable() {
+        let out = "    PID  Device  Name  GPU(ms)\n  94229       0   ???      nan  [non-debuggable]\n\n\
+            Processes must be debuggable to be captured\n";
+        assert_eq!(
+            parse_listing(out),
+            vec![Listed {
+                pid: 94229,
+                debuggable: false
+            }]
+        );
     }
 }

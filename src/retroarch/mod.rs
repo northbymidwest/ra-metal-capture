@@ -8,6 +8,7 @@
 
 pub mod app;
 pub mod capture;
+pub mod entitle;
 pub mod image;
 pub mod launch;
 pub mod remote;
@@ -187,6 +188,7 @@ impl Backend for RetroArch {
             keep_running: self.keep_running,
             ready_timeout: Duration::from_secs(30),
             log_path: tmp.path().join("retroarch.log"),
+            app: self.app.clone(),
         };
         capture::run(&cmd, &opts)?;
 
@@ -210,6 +212,7 @@ mod tests {
             source,
             shader: PathBuf::from("/nonexistent/p.slangp"),
             window: WindowMode::Fullscreen,
+            aspect: crate::config::Aspect::Native,
             frames: 1,
             settle: 5.0,
             advance: 1,

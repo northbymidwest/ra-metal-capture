@@ -2,14 +2,13 @@
 //! in this process, through the preset with librashader's Metal runtime,
 //! and write the trace with Metal's capture API. No RetroArch process.
 
-pub mod interrupt;
 pub mod libretro;
 pub mod render;
 
 use crate::backend::{Backend, Request, Source, StateSource};
 use crate::config::{self, Size};
 use crate::layout::{DirResolver, Located, describe_tried, settle_frames};
-use crate::{bundle, display, image_file, state};
+use crate::{bundle, display, image_file, interrupt, state};
 use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -50,6 +49,7 @@ impl Backend for Hosted {
             source,
             shader: preset,
             window,
+            aspect,
             frames,
             settle,
             advance,
@@ -106,6 +106,7 @@ impl Backend for Hosted {
             source,
             preset,
             window,
+            aspect,
             screen,
             warmup,
             frames,
@@ -214,8 +215,16 @@ fn boot_core(run: CoreRun, dirs: &mut DirResolver) -> Result<(CoreWithTemp, u32)
     let av = core.load_game(&run.rom, &info)?;
     if run.verbose {
         eprintln!(
-            "core {} ({}x{} at {:.3} fps)",
-            info.library_name, av.base.width, av.base.height, av.fps
+            "core {} ({}x{}, aspect {}, at {:.3} fps)",
+            info.library_name,
+            av.base.width,
+            av.base.height,
+            if av.aspect_ratio > 0.0 {
+                format!("{:.4}", av.aspect_ratio)
+            } else {
+                "not reported".to_string()
+            },
+            av.fps
         );
     }
     let warmup = match (mem, state_path) {
@@ -240,6 +249,9 @@ struct CoreWithTemp {
 impl render::FrameSource for CoreWithTemp {
     fn size(&self) -> Size {
         self.core.size()
+    }
+    fn aspect_ratio(&self) -> f64 {
+        self.core.aspect_ratio()
     }
     fn next(&mut self) -> Result<&[u8]> {
         self.core.next()
@@ -285,6 +297,7 @@ mod tests {
             source,
             shader: PathBuf::from(shader),
             window: WindowMode::Fullscreen,
+            aspect: config::Aspect::Native,
             frames: 1,
             settle: 5.0,
             advance: 1,

@@ -60,6 +60,9 @@ impl SystemInfo {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AvInfo {
     pub base: Size,
+    /// The core's reported aspect ratio; 0 when it reports none, in which
+    /// case the pixel aspect of `base` is what RetroArch shows.
+    pub aspect_ratio: f64,
     pub fps: f64,
 }
 
@@ -74,6 +77,8 @@ pub struct Core {
     /// The base geometry from `load_game`'s `AvInfo`, zero before a game is
     /// loaded. `run_frame` requires every frame to match this size.
     base: Size,
+    /// The aspect ratio from the same `AvInfo`, 0 when the core reports none.
+    aspect_ratio: f64,
     /// The most recent frame, lent out by `FrameSource::next`.
     last_frame: Vec<u8>,
 }
@@ -230,6 +235,7 @@ impl Core {
                 width: 0,
                 height: 0,
             },
+            aspect_ratio: 0.0,
             last_frame: Vec::new(),
         })
     }
@@ -374,8 +380,10 @@ impl Core {
             height: av.geometry.base_height,
         };
         self.base = base;
+        self.aspect_ratio = f64::from(av.geometry.aspect_ratio);
         Ok(AvInfo {
             base,
+            aspect_ratio: self.aspect_ratio,
             fps: av.timing.fps,
         })
     }
@@ -454,6 +462,15 @@ impl Drop for Core {
 impl crate::hosted::render::FrameSource for Core {
     fn size(&self) -> Size {
         self.size()
+    }
+    /// The core's reported aspect when it gives one, else the pixel
+    /// aspect, which is RetroArch's fallback too.
+    fn aspect_ratio(&self) -> f64 {
+        if self.aspect_ratio > 0.0 {
+            self.aspect_ratio
+        } else {
+            crate::hosted::render::pixel_aspect(self.base)
+        }
     }
     fn next(&mut self) -> Result<&[u8]> {
         let frame = self.run_frame()?;

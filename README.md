@@ -13,7 +13,7 @@ Xcode's GPU debugger.
 
 - macOS 27+ and Xcode 27+
 - Rust 1.98+
-- RetroArch.app, only for the RetroArch backend (optional when built with the librashader feature, the default)
+- RetroArch.app, only for the RetroArch backend (optional when built with the librashader feature, the default), re-signed once with `ra-metal-capture entitle` (see [Making RetroArch.app capturable](#making-retroarchapp-capturable))
 
 ## Install
 
@@ -76,6 +76,51 @@ captures its frames with Apple's `gpucapture`. RetroArch runs on a config
 written for the run; your own `retroarch.cfg`, saves, and states are
 never written. Available in every build; `cargo install --no-default-features`
 gives a RetroArch-only tool.
+
+## Making RetroArch.app capturable
+
+`gpucapture` can only attach to a process that is debuggable, which on
+macOS means its binary is signed with the
+`com.apple.security.get-task-allow` entitlement. The RetroArch.app builds
+that libretro ships are not, so `gpucapture list` shows RetroArch as
+`[non-debuggable]`, and the RetroArch backend stops with an error that
+names this section instead of capturing. The librashader backend does not
+need this, because it renders in this process.
+
+The tool re-signs the app for you:
+
+```
+ra-metal-capture entitle
+```
+
+`--app` names a bundle somewhere other than `/Applications/RetroArch.app`.
+This replaces libretro's signature with an ad-hoc one that carries the
+entitlement, which also drops the notarization the download had; if macOS
+then refuses to open the app, open it once from the Finder with
+Control-click and Open. Only the bundle is re-signed; the frameworks
+inside keep their own signatures, which works. Run it again after every
+RetroArch update, since a new build arrives with libretro's signature.
+When the app already has the entitlement the command says so and changes
+nothing.
+
+The same thing by hand, without the tool:
+
+```
+cat > retroarch.entitlements <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.get-task-allow</key>
+    <true/>
+</dict>
+</plist>
+PLIST
+codesign --force --sign - --entitlements retroarch.entitlements /Applications/RetroArch.app
+```
+
+Either way, `codesign -d --entitlements - /Applications/RetroArch.app`
+should then list `com.apple.security.get-task-allow` as true.
 
 ## License
 

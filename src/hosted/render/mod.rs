@@ -16,10 +16,10 @@
 mod trace;
 pub use trace::{CAPTURE_ENV, Trace};
 
-use super::interrupt;
 use crate::bundle::discard_partial;
-use crate::config::{Size, WindowMode};
+use crate::config::{Aspect, Size, WindowMode};
 use crate::display::Screen;
+use crate::interrupt;
 use anyhow::{Context, Result, anyhow, bail};
 use librashader::presets::ShaderFeatures;
 use librashader::runtime::Viewport;
@@ -49,6 +49,8 @@ pub struct RenderOptions {
     pub preset: PathBuf,
     /// Window mode from the command line, mapped to pixels by [`output_size`].
     pub window: WindowMode,
+    /// The viewport aspect; `Native` is the source's own.
+    pub aspect: Aspect,
     /// The main display, for `Fill` and `Fullscreen`.
     pub screen: Screen,
     /// Frames rendered through the chain before the capture starts, so
@@ -70,6 +72,9 @@ pub struct RenderOptions {
 pub trait FrameSource {
     /// Size of every frame this source yields.
     fn size(&self) -> Size;
+    /// The source's own aspect ratio: a core's reported one, or the pixel
+    /// aspect for an image or a core that reports none.
+    fn aspect_ratio(&self) -> f64;
     /// The next frame as tightly packed BGRA8 rows, top row first,
     /// exactly `size().width * size().height * 4` bytes, valid until the
     /// next call.
@@ -121,6 +126,9 @@ impl FrameSource for ImageSource {
     fn size(&self) -> Size {
         self.size
     }
+    fn aspect_ratio(&self) -> f64 {
+        pixel_aspect(self.size)
+    }
     fn next(&mut self) -> Result<&[u8]> {
         Ok(&self.bgra)
     }
@@ -170,11 +178,13 @@ fn new_texture(
 /// filter chain runs continuously across both phases.
 pub fn run(mut opts: RenderOptions) -> Result<()> {
     let image_size = opts.source.size();
-    let size = output_size(&opts.window, image_size, &opts.screen);
-    check_output_size(size)?;
+    check_texture_size(image_size).context("the source frame")?;
+    let aspect = opts.aspect.ratio_or(opts.source.aspect_ratio());
+    let size = output_size(&opts.window, image_size, aspect, &opts.screen);
+    check_texture_size(size).context("the output")?;
     if opts.verbose {
         eprintln!(
-            "source {}x{} -> output {}x{} px, {} warm-up + {} recorded frame(s)",
+            "source {}x{} at aspect {aspect:.4} -> output {}x{} px, {} warm-up + {} recorded frame(s)",
             image_size.width, image_size.height, size.width, size.height, opts.warmup, opts.frames
         );
     }
@@ -288,11 +298,33 @@ fn to_pixels(size: Size, backing_scale: f64) -> Size {
     }
 }
 
+/// Width over height of `size` in pixels; 0 for an empty size.
+pub fn pixel_aspect(size: Size) -> f64 {
+    if size.height == 0 {
+        0.0
+    } else {
+        size.width as f64 / size.height as f64
+    }
+}
+
+/// The shape a source is shown at: its own height, and the width that
+/// height needs at `aspect`, rounded. This is what RetroArch sizes a
+/// window from, so both backends start from the same shape.
+pub fn display_size(image: Size, aspect: f64) -> Size {
+    if aspect <= 0.0 || !aspect.is_finite() {
+        return image;
+    }
+    Size {
+        width: (image.height as f64 * aspect).round() as u32,
+        height: image.height,
+    }
+}
+
 /// Scale `image` by one factor so it fits inside `max`, keeping its aspect
 /// ratio and flooring to whole pixels, the way RetroArch's fill mode clamps
-/// a scaled window. Falls back to the image's own size when the factor
-/// would be zero or produce an empty texture (a zero `max`, or an image
-/// with a zero dimension).
+/// a scaled window and its viewport letterboxes inside a fixed one. Falls
+/// back to the image's own size when the factor would be zero or produce
+/// an empty texture (a zero `max`, or an image with a zero dimension).
 fn fit(image: Size, max: Size) -> Size {
     if image.width == 0 || image.height == 0 {
         return image;
@@ -317,19 +349,20 @@ fn fit(image: Size, max: Size) -> Size {
 /// Metal rather than returning an error, so it is checked here first.
 pub const MAX_TEXTURE_DIM: u32 = 16384;
 
-/// Refuse an output size Metal would reject: a zero dimension, or one
-/// above [`MAX_TEXTURE_DIM`].
-pub fn check_output_size(size: Size) -> Result<()> {
+/// Refuse a texture size Metal would reject: a zero dimension, or one
+/// above [`MAX_TEXTURE_DIM`]. Both the source frame and the output are
+/// checked, since Metal asserts rather than erroring on either.
+pub fn check_texture_size(size: Size) -> Result<()> {
     if size.width == 0 || size.height == 0 {
         bail!(
-            "the output size is {}x{}; refusing to create a zero-sized texture",
+            "size is {}x{}; refusing to create a zero-sized texture",
             size.width,
             size.height
         );
     }
     if size.width > MAX_TEXTURE_DIM || size.height > MAX_TEXTURE_DIM {
         bail!(
-            "the output size is {}x{}; Metal textures cannot exceed {MAX_TEXTURE_DIM} on a side, use a smaller --size or --scale",
+            "size is {}x{}; Metal textures cannot exceed {MAX_TEXTURE_DIM} on a side (for the output, use a smaller --size or --scale)",
             size.width,
             size.height
         );
@@ -337,18 +370,27 @@ pub fn check_output_size(size: Size) -> Result<()> {
     Ok(())
 }
 
-/// The output texture size, in pixels, for a window mode. RetroArch's modes
-/// are in points; this maps each to pixels on `screen` so both backends
-/// produce a similarly sized frame. `Exact` is taken as pixels as given.
-pub fn output_size(mode: &WindowMode, image: Size, screen: &Screen) -> Size {
+/// The output texture size, in pixels, for a window mode, given the
+/// source and the aspect it is shown at. The texture is the viewport
+/// RetroArch would draw into for the same request: `Scale` multiplies the
+/// [`display_size`] in points (RetroArch's window scale); `Exact`,
+/// `Fullscreen`, and `Fill` hold the largest box of that aspect inside the
+/// size, the display, or the visible area, which is where RetroArch
+/// letterboxes. RetroArch's modes are in points; each is mapped to pixels
+/// on `screen`, except `Exact`, which is taken as pixels as given.
+pub fn output_size(mode: &WindowMode, image: Size, aspect: f64, screen: &Screen) -> Size {
+    let display = display_size(image, aspect);
     match mode {
-        WindowMode::Exact(size) => *size,
-        WindowMode::Scale(n) => Size {
-            width: image.width.saturating_mul(*n),
-            height: image.height.saturating_mul(*n),
-        },
-        WindowMode::Fullscreen => to_pixels(screen.full, screen.backing_scale),
-        WindowMode::Fill { max } => fit(image, to_pixels(*max, screen.backing_scale)),
+        WindowMode::Exact(size) => fit(display, *size),
+        WindowMode::Scale(n) => to_pixels(
+            Size {
+                width: display.width.saturating_mul(*n),
+                height: display.height.saturating_mul(*n),
+            },
+            screen.backing_scale,
+        ),
+        WindowMode::Fullscreen => fit(display, to_pixels(screen.full, screen.backing_scale)),
+        WindowMode::Fill { max } => fit(display, to_pixels(*max, screen.backing_scale)),
     }
 }
 
@@ -407,15 +449,15 @@ mod tests {
     }
 
     #[test]
-    fn check_output_size_rejects_zero_and_oversize() {
+    fn check_texture_size_rejects_zero_and_oversize() {
         assert!(
-            check_output_size(Size {
+            check_texture_size(Size {
                 width: 0,
                 height: 5
             })
             .is_err()
         );
-        let err = check_output_size(Size {
+        let err = check_texture_size(Size {
             width: 40000,
             height: 10,
         })
@@ -423,7 +465,7 @@ mod tests {
         .to_string();
         assert!(err.contains("16384"), "{err}");
         assert!(
-            check_output_size(Size {
+            check_texture_size(Size {
                 width: 16384,
                 height: 16384
             })
@@ -432,41 +474,98 @@ mod tests {
     }
 
     #[test]
-    fn exact_is_pixels_as_given() {
+    fn pixel_aspect_is_width_over_height() {
+        assert_eq!(pixel_aspect(GB), 160.0 / 144.0);
+        assert_eq!(
+            pixel_aspect(Size {
+                width: 5,
+                height: 0
+            }),
+            0.0
+        );
+    }
+
+    /// A 4:3 console with non-square pixels: 256x224 shown at 4:3.
+    const SNES: Size = Size {
+        width: 256,
+        height: 224,
+    };
+    const FOUR_THREE: f64 = 4.0 / 3.0;
+    /// GB's own aspect is its pixel aspect.
+    const GB_ASPECT: f64 = 160.0 / 144.0;
+
+    #[test]
+    fn display_size_widens_to_the_aspect_at_the_source_height() {
+        assert_eq!(display_size(GB, GB_ASPECT), GB);
+        assert_eq!(
+            display_size(SNES, FOUR_THREE),
+            Size {
+                width: 299,
+                height: 224
+            }
+        );
+    }
+
+    #[test]
+    fn exact_is_the_aspect_box_inside_the_size() {
         let size = Size {
             width: 1600,
             height: 1440,
         };
         assert_eq!(
-            output_size(&WindowMode::Exact(size), GB, &screen(2.0)),
-            size
+            output_size(&WindowMode::Exact(size), GB, GB_ASPECT, &screen(2.0)),
+            Size {
+                width: 1600,
+                height: 1440
+            }
+        );
+        assert_eq!(
+            output_size(&WindowMode::Exact(size), SNES, FOUR_THREE, &screen(2.0)),
+            Size {
+                width: 1600,
+                height: 1198
+            }
         );
     }
 
     #[test]
-    fn scale_multiplies_the_image() {
+    fn scale_multiplies_the_display_size_in_points() {
         assert_eq!(
-            output_size(&WindowMode::Scale(4), GB, &screen(2.0)),
+            output_size(&WindowMode::Scale(4), GB, GB_ASPECT, &screen(2.0)),
+            Size {
+                width: 1280,
+                height: 1152
+            }
+        );
+        assert_eq!(
+            output_size(&WindowMode::Scale(4), GB, GB_ASPECT, &screen(1.0)),
             Size {
                 width: 640,
                 height: 576
             }
         );
+        assert_eq!(
+            output_size(&WindowMode::Scale(2), SNES, FOUR_THREE, &screen(1.0)),
+            Size {
+                width: 598,
+                height: 448
+            }
+        );
     }
 
     #[test]
-    fn fullscreen_is_the_full_frame_in_pixels() {
+    fn fullscreen_is_the_aspect_box_inside_the_full_frame() {
         assert_eq!(
-            output_size(&WindowMode::Fullscreen, GB, &screen(2.0)),
+            output_size(&WindowMode::Fullscreen, SNES, FOUR_THREE, &screen(2.0)),
             Size {
-                width: 5120,
+                width: 3844,
                 height: 2880
             }
         );
         assert_eq!(
-            output_size(&WindowMode::Fullscreen, GB, &screen(1.0)),
+            output_size(&WindowMode::Fullscreen, SNES, FOUR_THREE, &screen(1.0)),
             Size {
-                width: 2560,
+                width: 1922,
                 height: 1440
             }
         );
@@ -480,10 +579,25 @@ mod tests {
             height: 1382,
         };
         assert_eq!(
-            output_size(&WindowMode::Fill { max }, GB, &screen(2.0)),
+            output_size(&WindowMode::Fill { max }, GB, GB_ASPECT, &screen(2.0)),
             Size {
                 width: 3071,
                 height: 2764
+            }
+        );
+    }
+
+    #[test]
+    fn fill_uses_the_aspect_not_the_pixels() {
+        let max = Size {
+            width: 1000,
+            height: 1000,
+        };
+        assert_eq!(
+            output_size(&WindowMode::Fill { max }, SNES, FOUR_THREE, &screen(1.0)),
+            Size {
+                width: 1000,
+                height: 749
             }
         );
     }
@@ -499,7 +613,7 @@ mod tests {
             height: 100,
         };
         assert_eq!(
-            output_size(&WindowMode::Fill { max }, wide, &screen(1.0)),
+            output_size(&WindowMode::Fill { max }, wide, 4.0, &screen(1.0)),
             Size {
                 width: 1000,
                 height: 250
@@ -518,7 +632,7 @@ mod tests {
             height: 1000,
         };
         assert_eq!(
-            output_size(&WindowMode::Fill { max }, huge, &screen(1.0)),
+            output_size(&WindowMode::Fill { max }, huge, 4.0, &screen(1.0)),
             Size {
                 width: 1000,
                 height: 250
@@ -527,13 +641,13 @@ mod tests {
     }
 
     #[test]
-    fn fill_falls_back_to_the_image_when_max_is_degenerate() {
+    fn fill_falls_back_to_the_display_size_when_max_is_degenerate() {
         let zero = Size {
             width: 0,
             height: 0,
         };
         assert_eq!(
-            output_size(&WindowMode::Fill { max: zero }, GB, &screen(2.0)),
+            output_size(&WindowMode::Fill { max: zero }, GB, GB_ASPECT, &screen(2.0)),
             GB
         );
         let sliver = Size {
@@ -541,8 +655,16 @@ mod tests {
             height: 0,
         };
         assert_eq!(
-            output_size(&WindowMode::Fill { max: sliver }, GB, &screen(1.0)),
-            GB
+            output_size(
+                &WindowMode::Fill { max: sliver },
+                SNES,
+                FOUR_THREE,
+                &screen(1.0)
+            ),
+            Size {
+                width: 299,
+                height: 224
+            }
         );
     }
 }

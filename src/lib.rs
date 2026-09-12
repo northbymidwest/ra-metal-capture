@@ -41,6 +41,7 @@ pub mod display;
 #[cfg(feature = "librashader")]
 pub mod hosted;
 pub mod image_file;
+pub mod interrupt;
 pub mod layout;
 pub mod retroarch;
 pub mod state;

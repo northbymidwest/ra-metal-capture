@@ -2,6 +2,26 @@
 
 Notable changes per release. Dates are the publish date.
 
+## Unreleased
+
+### Added
+
+- `ra-metal-capture entitle [--app PATH]` re-signs a RetroArch.app ad hoc
+  with the `com.apple.security.get-task-allow` entitlement, which
+  `gpucapture` needs to attach to a process and which libretro's builds
+  lack; it says so and changes nothing when the app already has it.
+  `retroarch::entitle` is the library side. The README explains the
+  requirement and the manual `codesign` equivalent.
+
+### Changed
+
+- The RetroArch backend fails as soon as `gpucapture list` shows its
+  RetroArch as `[non-debuggable]`, naming the app and the `entitle`
+  command, instead of passing the capturability wait and failing later
+  inside `gpucapture start`. `retroarch::capture::parse_listing` and
+  `Listed` replace `parse_capturable_pids`, and `CaptureOptions` gains
+  `app` for that message.
+
 ## 0.5.0 - 2026-09-11
 
 ### Added

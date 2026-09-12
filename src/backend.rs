@@ -4,7 +4,7 @@
 //! backend needs beyond the request (the RetroArch app to launch, say) is
 //! the backend's own state.
 
-use crate::config::WindowMode;
+use crate::config::{Aspect, WindowMode};
 use anyhow::Result;
 use std::path::PathBuf;
 
@@ -43,6 +43,8 @@ pub struct Request {
     /// The preset to render through.
     pub shader: PathBuf,
     pub window: WindowMode,
+    /// The viewport's aspect ratio; `Native` is the source's own.
+    pub aspect: Aspect,
     /// Frames to record.
     pub frames: u32,
     /// Seconds to run (or wait) before recording when there is no state.

@@ -62,6 +62,61 @@ impl std::str::FromStr for Size {
     }
 }
 
+/// The viewport's aspect ratio, shared by both backends: the source's own
+/// (a core's reported aspect, an image's pixels), or one given on the
+/// command line as a float or a `W:H` pair.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Aspect {
+    /// The core's `aspect_ratio` from its AV info, or the image's pixel
+    /// aspect; RetroArch's "core provided" setting.
+    Native,
+    /// Width over height, always finite and positive.
+    Ratio(f64),
+}
+
+impl Aspect {
+    /// The ratio to use, given the source's native one.
+    pub fn ratio_or(&self, native: f64) -> f64 {
+        match self {
+            Aspect::Native => native,
+            Aspect::Ratio(r) => *r,
+        }
+    }
+}
+
+impl std::str::FromStr for Aspect {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("native") {
+            return Ok(Aspect::Native);
+        }
+        let positive = |part: &str| -> Result<f64, String> {
+            let v: f64 = part
+                .parse()
+                .map_err(|_| format!("expected native, a number, or W:H, got {s:?}"))?;
+            if !v.is_finite() || v <= 0.0 {
+                return Err(format!("aspect must be finite and positive, got {s:?}"));
+            }
+            Ok(v)
+        };
+        match s.split_once(':') {
+            Some((w, h)) => Ok(Aspect::Ratio(positive(w)? / positive(h)?)),
+            None => Ok(Aspect::Ratio(positive(s)?)),
+        }
+    }
+}
+
+impl std::fmt::Display for Aspect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Aspect::Native => f.write_str("native"),
+            Aspect::Ratio(r) => write!(f, "{r:.4}"),
+        }
+    }
+}
+
 /// How the output is sized: RetroArch's window, or the hosted backend's
 /// texture (see `render::output_size` for the pixel mapping).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +134,33 @@ pub enum WindowMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aspect_parses_native_floats_and_ratios() {
+        assert_eq!("native".parse::<Aspect>().unwrap(), Aspect::Native);
+        assert_eq!("Native".parse::<Aspect>().unwrap(), Aspect::Native);
+        assert_eq!("1.5".parse::<Aspect>().unwrap(), Aspect::Ratio(1.5));
+        let r = "4:3".parse::<Aspect>().unwrap();
+        assert!(
+            matches!(r, Aspect::Ratio(v) if (v - 4.0 / 3.0).abs() < 1e-9),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn aspect_rejects_zero_negative_and_malformed() {
+        for bad in [
+            "0", "-1", "4:0", "0:3", "abc", "4:3:2", "", "nan", "inf", "-4:3",
+        ] {
+            assert!(bad.parse::<Aspect>().is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn aspect_ratio_or_uses_native_only_for_native() {
+        assert_eq!(Aspect::Native.ratio_or(1.25), 1.25);
+        assert_eq!(Aspect::Ratio(2.0).ratio_or(1.25), 2.0);
+    }
 
     #[test]
     fn size_parses_wxh_and_rejects_zero_and_malformed() {

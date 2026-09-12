@@ -23,6 +23,8 @@ failures are on that path:
   including failure paths.
 - A panic or memory-safety issue reachable from command-line arguments, a
   `retroarch.cfg`, a `gpucapture` reply, or a UDP reply on the command port.
+- The `entitle` command signing anything other than the app it was given,
+  or with any entitlement beyond `com.apple.security.get-task-allow`.
 - The release and publishing path: the publishing workflow, its
   trusted-publishing configuration, or an archive / tag that does not match the
   source it claims to build from.
@@ -31,7 +33,8 @@ failures are on that path:
 
 - Anything that requires a modified or hostile RetroArch, core, or
   `gpucapture`, or a modified or hostile OS. The trust boundary is a stock
-  RetroArch.app and Apple's shipping Xcode tools on a stock system.
+  RetroArch.app, re-signed with the one entitlement the README describes,
+  and Apple's shipping Xcode tools on a stock system.
 - Behavior on unsupported macOS or Xcode (older than 27), where the tool is
   untested by design.
 - Another local process on the RetroArch command port. The port is opened by

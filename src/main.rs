@@ -7,7 +7,7 @@
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use ra_metal_capture::backend::{Backend, Interrupted, Request, Source, StateSource};
-use ra_metal_capture::config::{self, Size, WindowMode};
+use ra_metal_capture::config::{self, Aspect, Size, WindowMode};
 use ra_metal_capture::display;
 use ra_metal_capture::retroarch::RetroArch;
 use std::path::PathBuf;
@@ -53,8 +53,15 @@ const DEFAULT_BACKEND: BackendChoice = BackendChoice::Retroarch;
 /// launch RetroArch with a ROM and save state, or a static image, and
 /// capture its frames with gpucapture.
 #[derive(Parser, Debug)]
-#[command(version)]
+#[command(
+    version,
+    subcommand_negates_reqs = true,
+    args_conflicts_with_subcommands = true
+)]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Sub>,
+
     /// Load the ROM even if its extension is not one the core declares
     #[arg(long, requires = "core", help_heading = "librashader backend")]
     skip_extension_check: bool,
@@ -109,8 +116,8 @@ struct Cli {
     core_options: Option<PathBuf>,
 
     /// Shader preset (.slangp / .glslp) to render through
-    #[arg(long)]
-    shader: PathBuf,
+    #[arg(long, required = true)]
+    shader: Option<PathBuf>,
 
     /// retroarch.cfg, consulted only when a bare core name, --slot, or the
     /// system directory is not at RetroArch's default location; nothing
@@ -126,7 +133,8 @@ struct Cli {
     #[arg(long, value_parser = clap::value_parser!(Size), conflicts_with_all = ["scale", "fullscreen"])]
     size: Option<Size>,
 
-    /// Integer multiple of the source's native size
+    /// Integer multiple of the source's native size at its aspect, in
+    /// points, like RetroArch's window scale
     #[arg(
         long,
         conflicts_with_all = ["size", "fullscreen"],
@@ -138,6 +146,11 @@ struct Cli {
     /// RetroArch fullscreen (retroarch)
     #[arg(long, conflicts_with_all = ["size", "scale"])]
     fullscreen: bool,
+
+    /// Viewport aspect: native (the core's own, or the image's pixels), a
+    /// ratio like 4:3, or a number like 1.3333
+    #[arg(long, default_value = "native")]
+    aspect: Aspect,
 
     /// Without a save state: emulated seconds to run a hosted core before
     /// recording (librashader), or seconds to wait before capturing (retroarch)
@@ -161,8 +174,8 @@ struct Cli {
     frames: u32,
 
     /// Output .gputrace path
-    #[arg(long)]
-    output: PathBuf,
+    #[arg(long, required = true)]
+    output: Option<PathBuf>,
 
     /// Leave RetroArch running after the capture
     #[arg(long, help_heading = "RetroArch backend")]
@@ -172,6 +185,22 @@ struct Cli {
     /// line and run config and pass -v to RetroArch (retroarch)
     #[arg(short, long)]
     verbose: bool,
+}
+
+/// Commands other than a capture. Each stands alone: the capture flags are
+/// refused alongside one, and the capture's required flags are waived,
+/// which is why `shader` and `output` above are `Option`s clap requires.
+#[derive(clap::Subcommand, Debug, PartialEq, Eq)]
+enum Sub {
+    /// Re-sign a RetroArch.app ad hoc with the get-task-allow entitlement,
+    /// which gpucapture needs to attach to it; the RetroArch backend cannot
+    /// capture an app without it. Repeat after a RetroArch update
+    Entitle {
+        /// RetroArch .app bundle, or the binary inside it
+        /// [default: /Applications/RetroArch.app]
+        #[arg(long)]
+        app: Option<PathBuf>,
+    },
 }
 
 /// Flags that only the RetroArch backend honours, as given on this command line.
@@ -267,12 +296,17 @@ fn build(cli: Cli) -> Result<(Box<dyn Backend>, Request)> {
         // clap requires --image or both --core and --rom.
         _ => bail!("--image, or --core with --rom, is required"),
     };
-    let output = std::path::absolute(&cli.output)
-        .with_context(|| format!("resolving {}", cli.output.display()))?;
+    let (Some(shader), Some(output)) = (&cli.shader, &cli.output) else {
+        // clap requires both for a capture; only a subcommand waives them.
+        bail!("--shader and --output are required");
+    };
+    let output =
+        std::path::absolute(output).with_context(|| format!("resolving {}", output.display()))?;
     let request = Request {
         source,
-        shader: cli.shader.clone(),
+        shader: shader.clone(),
         window: cli.window_mode(),
+        aspect: cli.aspect,
         frames: cli.frames,
         settle: cli.settle,
         advance: cli.advance,
@@ -297,7 +331,12 @@ fn hosted_backend() -> Result<Box<dyn Backend>> {
 }
 
 fn main() -> Result<()> {
-    let (backend, request) = build(Cli::parse())?;
+    let cli = Cli::parse();
+    if let Some(Sub::Entitle { app }) = cli.command {
+        let app = app.unwrap_or(RetroArch::default().app);
+        return ra_metal_capture::retroarch::entitle::run(&app);
+    }
+    let (backend, request) = build(cli)?;
     backend.prepare()?;
     match backend.run(request) {
         Err(e) if e.is::<Interrupted>() => {
@@ -332,6 +371,51 @@ mod tests {
         let mut full = vec!["ra-metal-capture", "--shader", "p", "--output", "o"];
         full.extend_from_slice(args);
         Cli::try_parse_from(full)
+    }
+
+    #[test]
+    fn entitle_subcommand_needs_no_capture_flags() {
+        let cli = Cli::try_parse_from(["ra-metal-capture", "entitle"]).unwrap();
+        assert_eq!(cli.command, Some(Sub::Entitle { app: None }));
+        let cli =
+            Cli::try_parse_from(["ra-metal-capture", "entitle", "--app", "/x/R.app"]).unwrap();
+        assert_eq!(
+            cli.command,
+            Some(Sub::Entitle {
+                app: Some(PathBuf::from("/x/R.app"))
+            })
+        );
+    }
+
+    #[test]
+    fn entitle_subcommand_rejects_capture_flags() {
+        assert!(Cli::try_parse_from(["ra-metal-capture", "entitle", "--shader", "p"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "ra-metal-capture",
+                "--shader",
+                "p",
+                "--output",
+                "o",
+                "entitle"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn aspect_defaults_to_native_and_parses_ratios() {
+        assert_eq!(parse_rom(&[]).unwrap().aspect, config::Aspect::Native);
+        assert!(matches!(
+            parse_rom(&["--aspect", "4:3"]).unwrap().aspect,
+            config::Aspect::Ratio(v) if (v - 4.0 / 3.0).abs() < 1e-9
+        ));
+        assert!(parse_rom(&["--aspect", "0"]).is_err());
+    }
+
+    #[test]
+    fn a_capture_run_has_no_subcommand() {
+        assert_eq!(parse_rom(&[]).unwrap().command, None);
     }
 
     #[test]
@@ -512,7 +596,7 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("--shader"), "{err}");
-        assert_eq!(parse_rom(&[]).unwrap().shader, PathBuf::from("p"));
+        assert_eq!(parse_rom(&[]).unwrap().shader, Some(PathBuf::from("p")));
     }
 
     #[test]
