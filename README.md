@@ -117,8 +117,9 @@ have. The tool adds it for you:
 ra-metal-capture entitle
 ```
 
-Pass `--app` for a bundle somewhere other than `/Applications/RetroArch.app`.
-The app is re-signed ad hoc, which drops libretro's notarization, so if
+It says what it is about to do and asks for a `[Y/n]` before touching
+the app; `--yes` skips the question. Pass `--app` for a bundle somewhere
+other than `/Applications/RetroArch.app`. The app is re-signed ad hoc, which drops libretro's notarization, so if
 macOS refuses to open it afterwards, open it once from the Finder with
 Control-click and Open. Run the command again after every RetroArch
 update; when the app already has the entitlement it says so and changes

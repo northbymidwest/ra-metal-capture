@@ -220,6 +220,9 @@ enum Sub {
         /// RetroArch .app bundle, or the binary inside it
         #[arg(long, default_value = DEFAULT_APP)]
         app: PathBuf,
+        /// Re-sign without asking; otherwise a [Y/n] prompt precedes it
+        #[arg(short, long)]
+        yes: bool,
     },
 }
 
@@ -361,8 +364,13 @@ fn build(cli: Cli) -> Result<(Box<dyn Backend>, Request)> {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    if let Some(Sub::Entitle { app }) = cli.command {
-        return ra_metal_capture::retroarch::entitle::run(&app);
+    if let Some(Sub::Entitle { app, yes }) = cli.command {
+        use ra_metal_capture::retroarch::entitle::{Outcome, prompt_on_stdin, run};
+        let mut confirm = || if yes { Ok(true) } else { prompt_on_stdin(&app) };
+        return match run(&app, &mut confirm)? {
+            Outcome::Signed | Outcome::AlreadyEntitled => Ok(()),
+            Outcome::Declined => std::process::exit(1),
+        };
     }
     let (backend, request) = build(cli)?;
     backend.prepare()?;
@@ -407,15 +415,17 @@ mod tests {
         assert_eq!(
             cli.command,
             Some(Sub::Entitle {
-                app: PathBuf::from("/Applications/RetroArch.app")
+                app: PathBuf::from("/Applications/RetroArch.app"),
+                yes: false
             })
         );
-        let cli =
-            Cli::try_parse_from(["ra-metal-capture", "entitle", "--app", "/x/R.app"]).unwrap();
+        let cli = Cli::try_parse_from(["ra-metal-capture", "entitle", "--app", "/x/R.app", "-y"])
+            .unwrap();
         assert_eq!(
             cli.command,
             Some(Sub::Entitle {
-                app: PathBuf::from("/x/R.app")
+                app: PathBuf::from("/x/R.app"),
+                yes: true
             })
         );
     }

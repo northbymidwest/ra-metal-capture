@@ -9,8 +9,9 @@ Notable changes per release. Dates are the publish date.
 - `ra-metal-capture entitle [--app PATH]` re-signs a RetroArch.app ad hoc
   with the `com.apple.security.get-task-allow` entitlement, which
   `gpucapture` needs to attach to a process and which libretro's builds
-  lack; it says so and changes nothing when the app already has it.
-  `retroarch::entitle` is the library side.
+  lack. It asks for a `[Y/n]` first (`--yes` skips the question; a
+  closed stdin is a no, exit status 1), and says so and changes nothing
+  when the app already has it. `retroarch::entitle` is the library side.
 - `--aspect native|W:H|FLOAT`, for both backends. The hosted backend sizes
   its output texture to the largest box of that aspect the window mode
   allows, which is the viewport RetroArch draws into for the same
