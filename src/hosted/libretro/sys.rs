@@ -1,5 +1,8 @@
 //! libretro's types and constants, generated from
 //! `third_party/libretro/libretro.h` by `scripts/regen-libretro-bindings.sh`.
+//! The header is RetroArch's `libretro-common/include/libretro.h` at commit
+//! 69a4f0ea1e8aaf442ae4858f2e7f2b31a1776576:
+//! <https://github.com/libretro/RetroArch/blob/69a4f0ea1e8aaf442ae4858f2e7f2b31a1776576/libretro-common/include/libretro.h>
 //! Do not edit; rerun the script after replacing the header. The header's
 //! leading comment, with its license, follows verbatim.
 /*

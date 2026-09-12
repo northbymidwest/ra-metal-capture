@@ -7,8 +7,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+commit=$(tr -d '[:space:]' < third_party/libretro/COMMIT)
 cargo run --quiet --release \
   --manifest-path tools/regen-libretro-bindings/Cargo.toml \
   --target-dir target/regen-libretro-bindings -- \
-  third_party/libretro/libretro.h src/hosted/libretro/sys.rs
+  third_party/libretro/libretro.h "$commit" src/hosted/libretro/sys.rs
 rustfmt --edition 2024 src/hosted/libretro/sys.rs

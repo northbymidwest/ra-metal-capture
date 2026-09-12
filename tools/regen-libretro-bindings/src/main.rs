@@ -1,4 +1,5 @@
-//! Generates the libretro bindings module. Usage: `<header> <output>`.
+//! Generates the libretro bindings module. Usage: `<header> <commit> <output>`,
+//! where `<commit>` is the RetroArch commit the header was copied from.
 //!
 //! Types and constants only: the functions a core exports are resolved by
 //! name through libloading and the callbacks live in `env.rs`, so no
@@ -130,10 +131,14 @@ fn leading_comment(header: &str) -> String {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let [_, header, output] = args.as_slice() else {
-        eprintln!("usage: regen-libretro-bindings <libretro.h> <sys.rs>");
+    let [_, header, commit, output] = args.as_slice() else {
+        eprintln!("usage: regen-libretro-bindings <libretro.h> <commit> <sys.rs>");
         std::process::exit(2);
     };
+    if commit.len() < 12 || !commit.bytes().all(|b| b.is_ascii_hexdigit()) {
+        eprintln!("commit must be a hex RetroArch commit hash, got {commit:?}");
+        std::process::exit(2);
+    }
     let header_text = std::fs::read_to_string(header).expect("reading the header");
     let bindings = bindgen::Builder::default()
         .header(header)
@@ -149,11 +154,14 @@ fn main() {
         .clang_arg("-xc")
         .generate()
         .expect("bindgen failed");
-    let mut text = String::from(
+    let mut text = format!(
         "//! libretro's types and constants, generated from\n\
          //! `third_party/libretro/libretro.h` by `scripts/regen-libretro-bindings.sh`.\n\
+         //! The header is RetroArch's `libretro-common/include/libretro.h` at commit\n\
+         //! {commit}:\n\
+         //! <https://github.com/libretro/RetroArch/blob/{commit}/libretro-common/include/libretro.h>\n\
          //! Do not edit; rerun the script after replacing the header. The header's\n\
-         //! leading comment, with its license, follows verbatim.\n",
+         //! leading comment, with its license, follows verbatim.\n"
     );
     text.push_str(&leading_comment(&header_text));
     text.push_str(
