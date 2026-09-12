@@ -217,11 +217,9 @@ enum Sub {
     /// which gpucapture needs to attach to it; the RetroArch backend cannot
     /// capture an app without it. Repeat after a RetroArch update
     Entitle {
-        #[arg(
-            long,
-            help = format!("RetroArch .app bundle, or the binary inside it [default: {DEFAULT_APP}]")
-        )]
-        app: Option<PathBuf>,
+        /// RetroArch .app bundle, or the binary inside it
+        #[arg(long, default_value = DEFAULT_APP)]
+        app: PathBuf,
     },
 }
 
@@ -364,7 +362,6 @@ fn build(cli: Cli) -> Result<(Box<dyn Backend>, Request)> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     if let Some(Sub::Entitle { app }) = cli.command {
-        let app = app.unwrap_or(RetroArch::default().app);
         return ra_metal_capture::retroarch::entitle::run(&app);
     }
     let (backend, request) = build(cli)?;
@@ -407,13 +404,18 @@ mod tests {
     #[test]
     fn entitle_subcommand_needs_no_capture_flags() {
         let cli = Cli::try_parse_from(["ra-metal-capture", "entitle"]).unwrap();
-        assert_eq!(cli.command, Some(Sub::Entitle { app: None }));
+        assert_eq!(
+            cli.command,
+            Some(Sub::Entitle {
+                app: PathBuf::from("/Applications/RetroArch.app")
+            })
+        );
         let cli =
             Cli::try_parse_from(["ra-metal-capture", "entitle", "--app", "/x/R.app"]).unwrap();
         assert_eq!(
             cli.command,
             Some(Sub::Entitle {
-                app: Some(PathBuf::from("/x/R.app"))
+                app: PathBuf::from("/x/R.app")
             })
         );
     }
