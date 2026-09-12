@@ -323,6 +323,17 @@ fn build(cli: Cli) -> Result<(Box<dyn Backend>, Request)> {
         }
     };
 
+    // A --state that is not a file is refused here, before a backend opens
+    // anything; a bare number is almost always a slot meant for --slot.
+    if let Some(state) = &cli.state
+        && !state.is_file()
+    {
+        let hint = match state.to_str().and_then(|s| s.parse::<u32>().ok()) {
+            Some(n) => format!("; --state takes a file, did you mean --slot {n}?"),
+            None => String::new(),
+        };
+        bail!("state file not found at {}{hint}", state.display());
+    }
     let source = match (&cli.image, &cli.core, &cli.rom) {
         (Some(image), _, _) => Source::Image(image.clone()),
         (None, Some(core), Some(rom)) => Source::Core {
@@ -703,6 +714,24 @@ mod tests {
         );
         assert_eq!(request.frames, 2);
         assert!(request.output.is_absolute());
+    }
+
+    #[test]
+    fn build_refuses_a_missing_state_file_and_hints_at_slot_for_a_number() {
+        let err = build(parse_rom(&["--backend", "retroarch", "--state", "1"]).unwrap())
+            .err()
+            .expect("an error")
+            .to_string();
+        assert!(err.contains("state file not found"), "{err}");
+        assert!(err.contains("--slot 1"), "{err}");
+        let err = build(
+            parse_rom(&["--backend", "retroarch", "--state", "/nonexistent/x.state"]).unwrap(),
+        )
+        .err()
+        .expect("an error")
+        .to_string();
+        assert!(err.contains("/nonexistent/x.state"), "{err}");
+        assert!(!err.contains("--slot"), "{err}");
     }
 
     #[test]
