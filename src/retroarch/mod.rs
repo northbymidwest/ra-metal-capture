@@ -136,10 +136,26 @@ impl Backend for RetroArch {
                     .map_err(|tried| {
                         anyhow!("states directory not found at {}", describe_tried(&tried))
                     })?;
+                // RetroArch reports a missing slot only on its OSD and
+                // captures the boot frame, so look for the file first.
+                let states = layout.states.clone();
+                match state::find_slot(&states, &content, slot) {
+                    Some(found) => {
+                        if request.verbose {
+                            eprintln!("slot {slot}: {}", found.display());
+                        }
+                    }
+                    None => bail!(
+                        "slot {slot} for {} not found under {} (or one level below); \
+                         pass --state with the file instead",
+                        content.display(),
+                        states.savestate_directory.display()
+                    ),
+                }
                 Some(PausedConfig {
                     port: self.cmd_port,
                     slot,
-                    states: layout.states.clone(),
+                    states,
                 })
             }
             None => None,
@@ -204,9 +220,17 @@ impl Backend for RetroArch {
         };
         capture::run(&cmd, &opts)?;
 
-        if self.keep_running {
+        if self.keep_running || request.verbose {
             let kept = tmp.keep();
-            eprintln!("kept {} for the running RetroArch", kept.display());
+            eprintln!(
+                "kept {} ({})",
+                kept.display(),
+                if self.keep_running {
+                    "the running RetroArch's config; retroarch.log is there too"
+                } else {
+                    "retroarch.cfg and retroarch.log, for -v"
+                }
+            );
         }
 
         println!("{}", request.output.display());
