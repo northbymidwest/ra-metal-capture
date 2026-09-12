@@ -21,6 +21,9 @@ Notable changes per release. Dates are the publish date.
 
 ### Changed
 
+- `--output` is optional: without it the bundle is written to the
+  current directory as the ROM's or image's full file name (extension
+  included) plus `.gputrace`.
 - A `--state` that is not a file is refused before either backend opens
   anything, and a bare number gets a hint that `--slot N` is what takes
   a slot number; the hosted backend used to fail inside the core boot

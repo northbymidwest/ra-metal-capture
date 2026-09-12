@@ -67,8 +67,9 @@ struct Cli {
     #[arg(long, required = true)]
     shader: Option<PathBuf>,
 
-    /// Output .gputrace path
-    #[arg(long, required = true)]
+    /// Output .gputrace path [default: the ROM's or image's file name
+    /// plus .gputrace, in the current directory]
+    #[arg(long)]
     output: Option<PathBuf>,
 
     /// Replace a .gputrace bundle already at --output instead of refusing
@@ -210,7 +211,7 @@ struct Cli {
 
 /// Commands other than a capture. Each stands alone: the capture flags are
 /// refused alongside one, and the capture's required flags are waived,
-/// which is why `shader` and `output` above are `Option`s clap requires.
+/// which is why `shader` above is an `Option` clap requires.
 #[derive(clap::Subcommand, Debug, PartialEq, Eq)]
 enum Sub {
     /// Re-sign a RetroArch.app ad hoc with the get-task-allow entitlement,
@@ -287,6 +288,25 @@ impl Cli {
     }
 }
 
+/// The output path when `--output` is not given: the content's full file
+/// name (extension included, so two ROMs differing only there stay apart)
+/// with `.gputrace` appended, in the current directory.
+fn default_output(source: &Source) -> Result<PathBuf> {
+    let content = match source {
+        Source::Image(image) => image,
+        Source::Core { rom, .. } => rom,
+    };
+    let Some(name) = content.file_name() else {
+        bail!(
+            "{} has no file name to derive an output path from; pass --output",
+            content.display()
+        );
+    };
+    let mut name = name.to_os_string();
+    name.push(".gputrace");
+    Ok(PathBuf::from(name))
+}
+
 /// The backend the arguments select, and the request they describe.
 /// Flags meant for the other backend are refused here, naming them, so a
 /// user who drops `--backend` does not get a silently different run.
@@ -350,12 +370,16 @@ fn build(cli: Cli) -> Result<(Box<dyn Backend>, Request)> {
         // clap requires --image or both --core and --rom.
         _ => bail!("--image, or --core with --rom, is required"),
     };
-    let (Some(shader), Some(output)) = (&cli.shader, &cli.output) else {
-        // clap requires both for a capture; only a subcommand waives them.
-        bail!("--shader and --output are required");
+    let Some(shader) = &cli.shader else {
+        // clap requires it for a capture; only a subcommand waives it.
+        bail!("--shader is required");
+    };
+    let output = match &cli.output {
+        Some(output) => output.clone(),
+        None => default_output(&source)?,
     };
     let output =
-        std::path::absolute(output).with_context(|| format!("resolving {}", output.display()))?;
+        std::path::absolute(&output).with_context(|| format!("resolving {}", output.display()))?;
     let request = Request {
         source,
         shader: shader.clone(),
@@ -732,6 +756,42 @@ mod tests {
         .to_string();
         assert!(err.contains("/nonexistent/x.state"), "{err}");
         assert!(!err.contains("--slot"), "{err}");
+    }
+
+    #[test]
+    fn output_defaults_to_the_content_file_name_with_a_gputrace_suffix() {
+        let cli = Cli::try_parse_from([
+            "ra-metal-capture",
+            "--backend",
+            "retroarch",
+            "--core",
+            "c",
+            "--rom",
+            "/roms/Super Mario World (USA).sfc",
+            "--shader",
+            "p",
+        ])
+        .unwrap();
+        assert!(cli.output.is_none());
+        let (_, request) = build(cli).unwrap();
+        assert_eq!(
+            request.output,
+            std::env::current_dir()
+                .unwrap()
+                .join("Super Mario World (USA).sfc.gputrace")
+        );
+        let cli = Cli::try_parse_from([
+            "ra-metal-capture",
+            "--backend",
+            "retroarch",
+            "--image",
+            "fixtures/sample.png",
+            "--shader",
+            "p",
+        ])
+        .unwrap();
+        let (_, request) = build(cli).unwrap();
+        assert_eq!(request.output.file_name().unwrap(), "sample.png.gputrace");
     }
 
     #[test]

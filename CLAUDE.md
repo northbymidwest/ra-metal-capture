@@ -92,11 +92,12 @@ The same command with `--backend retroarch` launches
   crashed or disconnected". Every launch passes `--sram-mode
   noload-nosave` so RetroArch never touches `.srm`/`.rtc` files. A
   `--state` file is copied into the temp dir rather than loaded in place.
-- `--shader` and `--output` are `Option` fields with `required = true`
-  in `src/main.rs`, not plain `PathBuf`s: clap's `subcommand_negates_reqs`
-  waives them for `entitle`, and the derive cannot fill a non-`Option`
-  field that is absent. Turning them back into `PathBuf` breaks the
-  subcommand while every capture test still passes.
+- `--shader` is an `Option` field with `required = true` in
+  `src/main.rs`, not a plain `PathBuf`: clap's `subcommand_negates_reqs`
+  waives it for `entitle`, and the derive cannot fill a non-`Option`
+  field that is absent. Turning it back into `PathBuf` breaks the
+  subcommand while every capture test still passes. `--output` is an
+  ordinary optional flag whose default is derived in `build`.
 - `deny.toml` lists exactly the licenses the tree uses with
   `unused-allowed-license = "deny"`; adding or dropping a dependency may
   require editing that list.
