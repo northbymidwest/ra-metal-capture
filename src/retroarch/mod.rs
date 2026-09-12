@@ -147,6 +147,7 @@ impl Backend for RetroArch {
 
         let run_config = RunConfig {
             window: display::for_retroarch_window(request.window.clone()),
+            aspect: request.aspect,
             system_dir: dirs.system_dir(),
             savefile_dir,
             core_options,

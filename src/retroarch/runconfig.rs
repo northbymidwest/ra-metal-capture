@@ -3,7 +3,7 @@
 //! RetroArch fills everything else from its compiled defaults, so the
 //! user's own config is never read for the run and never written.
 
-use crate::config::WindowMode;
+use crate::config::{Aspect, WindowMode};
 use crate::state::StateDirs;
 use anyhow::{Result, bail};
 use std::path::{Path, PathBuf};
@@ -30,9 +30,14 @@ pub struct PausedConfig {
 
 /// The per-run config. Rendered text is the whole config RetroArch runs
 /// on; every key not listed takes RetroArch's compiled default.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RunConfig {
     pub window: WindowMode,
+    /// The viewport aspect: `Native` selects RetroArch's "core provided"
+    /// entry (index 22), a ratio its "config" entry (index 20) with
+    /// `video_aspect_ratio` set to the value. `video_force_aspect` is
+    /// written too, since the viewport shape depends on it.
+    pub aspect: Aspect,
     /// Where cores find BIOS and other system files.
     pub system_dir: PathBuf,
     /// A per-run save directory. The launch also passes `--sram-mode
@@ -97,7 +102,17 @@ impl RunConfig {
             ("pause_nonactive", "false".into()),
             ("menu_show_load_content_animation", "false".into()),
             ("video_font_enable", "false".into()),
+            ("video_force_aspect", "true".into()),
         ];
+        // RetroArch's `enum aspect_ratio`: ASPECT_RATIO_CONFIG is 20,
+        // ASPECT_RATIO_CORE is 22 (gfx/video_defines.h at 1.22).
+        match self.aspect {
+            Aspect::Native => lines.push(("aspect_ratio_index", "22".into())),
+            Aspect::Ratio(r) => {
+                lines.push(("aspect_ratio_index", "20".into()));
+                lines.push(("video_aspect_ratio", format!("{r:.6}")));
+            }
+        }
         match &self.window {
             WindowMode::Fill { max } => {
                 lines.push(("video_fullscreen", "false".into()));
@@ -152,7 +167,7 @@ impl RunConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Size;
+    use crate::config::{Aspect, Size};
 
     #[test]
     fn config_safe_rejects_quotes_and_newlines() {
@@ -182,11 +197,14 @@ history_list_enable = \"false\"\n\
 bundle_assets_extract_enable = \"false\"\n\
 pause_nonactive = \"false\"\n\
 menu_show_load_content_animation = \"false\"\n\
-video_font_enable = \"false\"\n";
+video_font_enable = \"false\"\n\
+video_force_aspect = \"true\"\n\
+aspect_ratio_index = \"22\"\n";
 
     fn base(window: WindowMode) -> RunConfig {
         RunConfig {
             window,
+            aspect: Aspect::Native,
             system_dir: PathBuf::from("/sys"),
             savefile_dir: PathBuf::from("/tmp/x/saves"),
             core_options: PathBuf::from("/tmp/x/core-options.cfg"),
@@ -248,6 +266,17 @@ video_window_auto_width_max = \"0\"\n\
 video_window_auto_height_max = \"0\"\n\
 video_fullscreen_x = \"0\"\n\
 video_fullscreen_y = \"0\"\n"
+        );
+        assert_eq!(cfg.render().unwrap(), expected);
+    }
+
+    #[test]
+    fn render_aspect_ratio_override_selects_the_config_entry() {
+        let mut cfg = base(WindowMode::Fullscreen);
+        cfg.aspect = Aspect::Ratio(4.0 / 3.0);
+        let expected = COMMON.replace(
+            "aspect_ratio_index = \"22\"\n",
+            "aspect_ratio_index = \"20\"\nvideo_aspect_ratio = \"1.333333\"\n",
         );
         assert_eq!(cfg.render().unwrap(), expected);
     }
