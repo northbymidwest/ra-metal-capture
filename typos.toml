@@ -4,3 +4,8 @@
 [default.extend-words]
 # `flate2` is the crate that inflates RetroArch RZIP state files.
 flate = "flate"
+
+[files]
+# libretro.h is foreign text (RetroArch's), and sys.rs carries its comments
+# verbatim; neither can be respelled here.
+extend-exclude = ["third_party/", "src/hosted/libretro/sys.rs"]
