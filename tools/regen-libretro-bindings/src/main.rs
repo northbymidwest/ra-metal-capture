@@ -3,8 +3,8 @@
 //! Types and constants only: the functions a core exports are resolved by
 //! name through libloading and the callbacks live in `env.rs`, so no
 //! extern block is wanted. The header's per-item Doxygen comments are
-//! turned into rustdoc by doxygen-rs, after `@code` blocks are fenced with
-//! their language so rustdoc never runs one as a Rust doctest. The header's
+//! turned into rustdoc by doxygen-bindgen, after `@code` blocks are fenced
+//! with their language so rustdoc never runs one as a Rust doctest. The header's
 //! leading file comment, which holds its license, is copied verbatim since
 //! bindgen only carries comments attached to declarations.
 
@@ -18,12 +18,12 @@ struct Doxygen;
 impl ParseCallbacks for Doxygen {
     fn process_comment(&self, comment: &str) -> Option<String> {
         let prepared = join_dangling_see(&fence_code_blocks(comment));
-        // doxygen-rs panics on some inputs; such a comment is kept as
-        // prepared (still fenced, so never a doctest) and reported.
-        match std::panic::catch_unwind(|| doxygen_rs::transform(&prepared)) {
-            Ok(rustdoc) => Some(rustdoc),
-            Err(_) => {
-                eprintln!("doxygen-rs could not transform a comment; kept as is:\n{prepared}\n---");
+        // A comment doxygen-bindgen refuses is kept as prepared (still
+        // fenced, so never a doctest) and reported.
+        match doxygen_bindgen::transform(&prepared) {
+            Ok(rustdoc) => Some(move_punctuation_out_of_links(&rustdoc)),
+            Err(e) => {
+                eprintln!("doxygen-bindgen could not transform a comment ({e}); kept as is:\n{prepared}\n---");
                 Some(prepared)
             }
         }
@@ -31,7 +31,7 @@ impl ParseCallbacks for Doxygen {
 }
 
 /// A `@see` or `@sa` alone on its line, with the reference on the next
-/// one, is joined onto one line; doxygen-rs panics on the bare tag.
+/// one, is joined onto one line so the reference is what gets linked.
 fn join_dangling_see(comment: &str) -> String {
     let lines: Vec<&str> = comment.lines().collect();
     let mut out = String::with_capacity(comment.len());
@@ -85,6 +85,35 @@ fn fence_code_blocks(comment: &str) -> String {
     out
 }
 
+/// doxygen-bindgen takes the word after `@see` or `\ref` up to the next
+/// space, so a sentence-ending mark rides along inside the link:
+/// `` [`NAME.`] `` becomes `` [`NAME`]. ``.
+fn move_punctuation_out_of_links(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("[`") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        match after.find("`]") {
+            Some(end) => {
+                let inner = &after[..end];
+                let trimmed = inner.trim_end_matches(['.', ',', ';', ':']);
+                out.push_str("[`");
+                out.push_str(trimmed);
+                out.push_str("`]");
+                out.push_str(&inner[trimmed.len()..]);
+                rest = &after[end + 2..];
+            }
+            None => {
+                out.push_str("[`");
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// The header's leading block comment, verbatim, demoted from a doc
 /// comment (`/*!`) to a plain one so rustdoc leaves it alone.
 fn leading_comment(header: &str) -> String {
@@ -100,9 +129,6 @@ fn leading_comment(header: &str) -> String {
 }
 
 fn main() {
-    // doxygen-rs's panics are caught in `process_comment`; keep its
-    // default hook from printing a backtrace notice for each one.
-    std::panic::set_hook(Box::new(|_| {}));
     let args: Vec<String> = std::env::args().collect();
     let [_, header, output] = args.as_slice() else {
         eprintln!("usage: regen-libretro-bindings <libretro.h> <sys.rs>");

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regenerates src/hosted/libretro/sys.rs from third_party/libretro/libretro.h.
 # The generator is the tools/regen-libretro-bindings crate (bindgen as a
-# library, with doxygen-rs turning the header's Doxygen comments into
+# library, with doxygen-bindgen turning the header's Doxygen comments into
 # rustdoc); it is not part of the main build, and its output is what the
 # crate compiles. bindgen needs libclang, which Xcode provides.
 set -euo pipefail

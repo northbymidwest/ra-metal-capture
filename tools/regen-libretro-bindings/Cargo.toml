@@ -12,4 +12,4 @@ license = "0BSD"
 
 [dependencies]
 bindgen = "0.73.2"
-doxygen-rs = "0.4.2"
+doxygen-bindgen = "0.1.4"
