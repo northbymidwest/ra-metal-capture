@@ -8,7 +8,7 @@ pub mod render;
 use crate::backend::{Backend, Request, Source, StateSource};
 use crate::config::{self, Size};
 use crate::layout::{DirResolver, Located, describe_tried, settle_frames};
-use crate::{bundle, display, image_file, interrupt, state};
+use crate::{bundle, display, image_file, interrupt, preset, state};
 use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -48,6 +48,7 @@ impl Backend for Hosted {
         let Request {
             source,
             shader: preset,
+            params,
             window,
             aspect,
             frames,
@@ -60,6 +61,30 @@ impl Backend for Hosted {
         if !preset.is_file() {
             bail!("shader preset not found at {}", preset.display());
         }
+        // Parameter overrides go through a wrapper preset in a temp dir
+        // that lives until the render is done.
+        let override_dir = if params.is_empty() {
+            None
+        } else {
+            Some(
+                tempfile::Builder::new()
+                    .prefix("ra-metal-capture-")
+                    .tempdir()
+                    .context("creating temp dir")?,
+            )
+        };
+        let preset = match &override_dir {
+            Some(dir) => {
+                let original = std::path::absolute(&preset)
+                    .with_context(|| format!("resolving {}", preset.display()))?;
+                let wrapper = preset::write_override_preset(&original, &params, dir.path())?;
+                if verbose {
+                    eprintln!("parameter overrides: {}", wrapper.display());
+                }
+                wrapper
+            }
+            None => preset,
+        };
         // Refuse a bad output path before loading anything.
         bundle::prepare_output(&output)?;
         interrupt::install();
@@ -296,6 +321,7 @@ mod tests {
         Request {
             source,
             shader: PathBuf::from(shader),
+            params: vec![],
             window: WindowMode::Fullscreen,
             aspect: config::Aspect::Native,
             frames: 1,

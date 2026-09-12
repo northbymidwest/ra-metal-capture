@@ -5,6 +5,7 @@
 //! the backend's own state.
 
 use crate::config::{Aspect, WindowMode};
+use crate::preset::Param;
 use anyhow::Result;
 use std::path::PathBuf;
 
@@ -42,6 +43,9 @@ pub struct Request {
     pub source: Source,
     /// The preset to render through.
     pub shader: PathBuf,
+    /// Preset parameter overrides; with any, the backend renders a wrapper
+    /// preset (see `preset::write_override_preset`) instead of `shader`.
+    pub params: Vec<Param>,
     pub window: WindowMode,
     /// The viewport's aspect ratio; `Native` is the source's own.
     pub aspect: Aspect,

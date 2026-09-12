@@ -9,6 +9,7 @@ use clap::Parser;
 use ra_metal_capture::backend::{Backend, Interrupted, Request, Source, StateSource};
 use ra_metal_capture::config::{self, Aspect, Size, WindowMode};
 use ra_metal_capture::display;
+use ra_metal_capture::preset::Param;
 use ra_metal_capture::retroarch::RetroArch;
 use std::path::PathBuf;
 
@@ -151,6 +152,12 @@ struct Cli {
     /// ratio like 4:3, or a number like 1.3333
     #[arg(long, default_value = "native")]
     aspect: Aspect,
+
+    /// Override a preset parameter (repeatable): the run renders a wrapper
+    /// preset that references --shader with these values pinned. An
+    /// unknown name is silently ignored by either backend
+    #[arg(long, value_name = "NAME=VALUE")]
+    param: Vec<Param>,
 
     /// Without a save state: emulated seconds to run a hosted core before
     /// recording (librashader), or seconds to wait before capturing (retroarch)
@@ -305,6 +312,7 @@ fn build(cli: Cli) -> Result<(Box<dyn Backend>, Request)> {
     let request = Request {
         source,
         shader: shader.clone(),
+        params: cli.param.clone(),
         window: cli.window_mode(),
         aspect: cli.aspect,
         frames: cli.frames,
@@ -411,6 +419,16 @@ mod tests {
             config::Aspect::Ratio(v) if (v - 4.0 / 3.0).abs() < 1e-9
         ));
         assert!(parse_rom(&["--aspect", "0"]).is_err());
+    }
+
+    #[test]
+    fn param_is_repeatable_and_validated() {
+        let cli = parse_rom(&["--param", "A=1", "--param", "B=2.5"]).unwrap();
+        assert_eq!(cli.param.len(), 2);
+        assert_eq!(cli.param[1].name, "B");
+        assert_eq!(cli.param[1].value, 2.5);
+        assert!(parse_rom(&["--param", "A"]).is_err());
+        assert!(parse_rom(&[]).unwrap().param.is_empty());
     }
 
     #[test]

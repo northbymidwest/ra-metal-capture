@@ -17,7 +17,7 @@ pub mod runconfig;
 use crate::backend::{Backend, Request, Source, StateSource};
 use crate::config;
 use crate::layout::{DirResolver, describe_tried};
-use crate::{display, state};
+use crate::{display, preset, state};
 use anyhow::{Context, Result, anyhow, bail};
 use launch::{LaunchPlan, build_command};
 use runconfig::{PausedConfig, RunConfig};
@@ -159,11 +159,22 @@ impl Backend for RetroArch {
         std::fs::write(&config_path, &rendered)
             .with_context(|| format!("writing {}", config_path.display()))?;
 
+        let shader = if request.params.is_empty() {
+            request.shader.clone()
+        } else {
+            let original = std::path::absolute(&request.shader)
+                .with_context(|| format!("resolving {}", request.shader.display()))?;
+            let wrapper = preset::write_override_preset(&original, &request.params, tmp.path())?;
+            if request.verbose {
+                eprintln!("parameter overrides: {}", wrapper.display());
+            }
+            wrapper
+        };
         let plan = LaunchPlan {
             binary,
             core,
             content,
-            shader: request.shader.clone(),
+            shader,
             config: config_path,
             fullscreen: request.window == config::WindowMode::Fullscreen,
             verbose: request.verbose,
@@ -212,6 +223,7 @@ mod tests {
         Request {
             source,
             shader: PathBuf::from("/nonexistent/p.slangp"),
+            params: vec![],
             window: WindowMode::Fullscreen,
             aspect: crate::config::Aspect::Native,
             frames: 1,

@@ -43,5 +43,6 @@ pub mod hosted;
 pub mod image_file;
 pub mod interrupt;
 pub mod layout;
+pub mod preset;
 pub mod retroarch;
 pub mod state;
