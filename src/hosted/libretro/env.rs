@@ -27,7 +27,15 @@ pub struct Shared {
     pub claimed: bool,
     pub system_dir: Option<CString>,
     pub save_dir: Option<CString>,
+    /// Values from `--core-options`; consulted first by `GET_VARIABLE`.
     pub options: HashMap<String, CString>,
+    /// The defaults a core declared through `SET_VARIABLES` or one of the
+    /// `SET_CORE_OPTIONS` forms; what `GET_VARIABLE` answers when
+    /// `options` has nothing, which is what RetroArch does on a fresh
+    /// config. A core may take `true` from `GET_VARIABLE` as "a value is
+    /// present" (snes9x's `update_variables` calls `strcmp` on it), so a
+    /// registered key must never come back null.
+    pub defaults: HashMap<String, CString>,
     pub pixel_format: PixelFormat,
     pub asked_for_hw_render: bool,
     pub frame: Option<Frame>,
@@ -40,6 +48,7 @@ impl Default for Shared {
             system_dir: None,
             save_dir: None,
             options: HashMap::new(),
+            defaults: HashMap::new(),
             // libretro's default when a core never sets one. `PixelFormat`
             // is a foreign type, so it cannot carry its own `Default`.
             pixel_format: PixelFormat::ARGB1555,
@@ -65,12 +74,192 @@ fn bytes_per_pixel(format: PixelFormat) -> usize {
     }
 }
 
-// `libretro-sys` 0.1.1 predates these four; the values are from libretro.h
-// (RETRO_ENVIRONMENT_SET_CORE_OPTIONS, _INTL, _V2 and _V2_INTL).
+// `libretro-sys` 0.1.1 predates the core-options commands and their
+// structs; the values and layouts below are from libretro.h at RetroArch
+// 1.22 (RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION, SET_CORE_OPTIONS,
+// _INTL, _V2, _V2_INTL, and the retro_core_option* structs).
+const ENVIRONMENT_GET_CORE_OPTIONS_VERSION: c_uint = 52;
 const ENVIRONMENT_SET_CORE_OPTIONS: c_uint = 53;
 const ENVIRONMENT_SET_CORE_OPTIONS_INTL: c_uint = 54;
 const ENVIRONMENT_SET_CORE_OPTIONS_V2: c_uint = 67;
 const ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL: c_uint = 68;
+/// The core-options API version this frontend implements, answered to
+/// `GET_CORE_OPTIONS_VERSION`; a core then registers with the v2 form.
+const CORE_OPTIONS_VERSION: c_uint = 2;
+/// `RETRO_NUM_CORE_OPTION_VALUES_MAX`: the inline value array's length.
+pub const NUM_CORE_OPTION_VALUES_MAX: usize = 128;
+
+/// `retro_core_option_value`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct CoreOptionValue {
+    pub value: *const c_char,
+    pub label: *const c_char,
+}
+
+/// `retro_core_option_definition` (the v1 form).
+#[repr(C)]
+pub struct CoreOptionDefinition {
+    pub key: *const c_char,
+    pub desc: *const c_char,
+    pub info: *const c_char,
+    pub values: [CoreOptionValue; NUM_CORE_OPTION_VALUES_MAX],
+    pub default_value: *const c_char,
+}
+
+/// `retro_core_options_intl`.
+#[repr(C)]
+pub struct CoreOptionsIntl {
+    pub us: *mut CoreOptionDefinition,
+    pub local: *mut CoreOptionDefinition,
+}
+
+/// `retro_core_option_v2_category`; read only to skip past it.
+#[repr(C)]
+pub struct CoreOptionV2Category {
+    pub key: *const c_char,
+    pub desc: *const c_char,
+    pub info: *const c_char,
+}
+
+/// `retro_core_option_v2_definition`.
+#[repr(C)]
+pub struct CoreOptionV2Definition {
+    pub key: *const c_char,
+    pub desc: *const c_char,
+    pub desc_categorized: *const c_char,
+    pub info: *const c_char,
+    pub info_categorized: *const c_char,
+    pub category_key: *const c_char,
+    pub values: [CoreOptionValue; NUM_CORE_OPTION_VALUES_MAX],
+    pub default_value: *const c_char,
+}
+
+/// `retro_core_options_v2`.
+#[repr(C)]
+pub struct CoreOptionsV2 {
+    pub categories: *mut CoreOptionV2Category,
+    pub definitions: *mut CoreOptionV2Definition,
+}
+
+/// `retro_core_options_v2_intl`.
+#[repr(C)]
+pub struct CoreOptionsV2Intl {
+    pub us: *mut CoreOptionsV2,
+    pub local: *mut CoreOptionsV2,
+}
+
+/// A C string as an owned key or value; None for a null pointer.
+///
+/// # Safety
+///
+/// `p` is null or points at a NUL-terminated string that outlives the call.
+unsafe fn owned(p: *const c_char) -> Option<CString> {
+    if p.is_null() {
+        None
+    } else {
+        // SAFETY: the caller's contract.
+        Some(unsafe { CStr::from_ptr(p) }.to_owned())
+    }
+}
+
+/// The default of a v0 variable: its value is `"Description; a|b|c"` and
+/// the first listed option is the default (RetroArch's
+/// `core_option_manager_new_vars`). A value without the `"; "` separator
+/// is taken whole, as RetroArch does.
+fn v0_default(value: &CStr) -> CString {
+    let text = value.to_bytes();
+    let after_desc = match text.windows(2).position(|w| w == b"; ") {
+        Some(i) => &text[i + 2..],
+        None => text,
+    };
+    let first = after_desc.split(|b| *b == b'|').next().unwrap_or_default();
+    CString::new(first).unwrap_or_default()
+}
+
+/// The default of a v1 or v2 definition: `default_value`, else the first
+/// value, else nothing.
+///
+/// # Safety
+///
+/// Every non-null pointer is a NUL-terminated string valid for the call.
+unsafe fn definition_default(
+    default_value: *const c_char,
+    values: &[CoreOptionValue; NUM_CORE_OPTION_VALUES_MAX],
+) -> Option<CString> {
+    // SAFETY: the caller's contract covers both pointers.
+    unsafe { owned(default_value).or_else(|| owned(values[0].value)) }
+}
+
+/// Record the defaults a `SET_VARIABLES` list declares: `retro_variable`
+/// entries up to one with a null key.
+///
+/// # Safety
+///
+/// `list` points at such an array, valid for the call.
+unsafe fn register_v0(s: &mut Shared, mut list: *const Variable) {
+    // SAFETY: the caller's contract; the walk stops at the null key.
+    unsafe {
+        while !(*list).key.is_null() {
+            if let (Some(key), Some(value)) = (owned((*list).key), owned((*list).value)) {
+                s.defaults
+                    .insert(key.to_string_lossy().into_owned(), v0_default(&value));
+            }
+            list = list.add(1);
+        }
+    }
+}
+
+/// Record the defaults a v1 definition list declares.
+///
+/// # Safety
+///
+/// `list` is null or points at a null-key-terminated array valid for the call.
+unsafe fn register_v1(s: &mut Shared, mut list: *const CoreOptionDefinition) {
+    if list.is_null() {
+        return;
+    }
+    // SAFETY: the caller's contract; the walk stops at the null key.
+    unsafe {
+        while !(*list).key.is_null() {
+            let d = &*list;
+            if let (Some(key), Some(value)) =
+                (owned(d.key), definition_default(d.default_value, &d.values))
+            {
+                s.defaults.insert(key.to_string_lossy().into_owned(), value);
+            }
+            list = list.add(1);
+        }
+    }
+}
+
+/// Record the defaults a v2 table declares.
+///
+/// # Safety
+///
+/// `table` is null or points at a `CoreOptionsV2` whose `definitions` is
+/// null or a null-key-terminated array, all valid for the call.
+unsafe fn register_v2(s: &mut Shared, table: *const CoreOptionsV2) {
+    if table.is_null() {
+        return;
+    }
+    // SAFETY: the caller's contract; the walk stops at the null key.
+    unsafe {
+        let mut list: *const CoreOptionV2Definition = (*table).definitions;
+        if list.is_null() {
+            return;
+        }
+        while !(*list).key.is_null() {
+            let d = &*list;
+            if let (Some(key), Some(value)) =
+                (owned(d.key), definition_default(d.default_value, &d.values))
+            {
+                s.defaults.insert(key.to_string_lossy().into_owned(), value);
+            }
+            list = list.add(1);
+        }
+    }
+}
 
 // The two flag bits libretro.h can set on a command value:
 // RETRO_ENVIRONMENT_EXPERIMENTAL marks a command whose number is otherwise
@@ -99,16 +288,18 @@ pub unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
         return false;
     }
     let cmd = cmd & !ENVIRONMENT_EXPERIMENTAL;
-    // Acknowledging a core's option list needs nothing from `data`, and
-    // libretro.h lets a core pass NULL there to declare that it has none.
-    if matches!(
-        cmd,
-        ENVIRONMENT_SET_VARIABLES
-            | ENVIRONMENT_SET_CORE_OPTIONS
-            | ENVIRONMENT_SET_CORE_OPTIONS_INTL
-            | ENVIRONMENT_SET_CORE_OPTIONS_V2
-            | ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL
-    ) {
+    // libretro.h lets a core pass NULL for its option list to declare
+    // that it has none; that is acknowledged without reading anything.
+    if data.is_null()
+        && matches!(
+            cmd,
+            ENVIRONMENT_SET_VARIABLES
+                | ENVIRONMENT_SET_CORE_OPTIONS
+                | ENVIRONMENT_SET_CORE_OPTIONS_INTL
+                | ENVIRONMENT_SET_CORE_OPTIONS_V2
+                | ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL
+        )
+    {
         return true;
     }
     if data.is_null() {
@@ -163,10 +354,38 @@ pub unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
                 var.value = std::ptr::null();
                 if !var.key.is_null() {
                     let key = CStr::from_ptr(var.key).to_string_lossy();
-                    if let Some(v) = s.options.get(key.as_ref()) {
+                    if let Some(v) = s
+                        .options
+                        .get(key.as_ref())
+                        .or_else(|| s.defaults.get(key.as_ref()))
+                    {
                         var.value = v.as_ptr();
                     }
                 }
+                true
+            }
+            ENVIRONMENT_GET_CORE_OPTIONS_VERSION => {
+                *(data as *mut c_uint) = CORE_OPTIONS_VERSION;
+                true
+            }
+            ENVIRONMENT_SET_VARIABLES => {
+                register_v0(&mut s, data as *const Variable);
+                true
+            }
+            ENVIRONMENT_SET_CORE_OPTIONS => {
+                register_v1(&mut s, data as *const CoreOptionDefinition);
+                true
+            }
+            ENVIRONMENT_SET_CORE_OPTIONS_INTL => {
+                register_v1(&mut s, (*(data as *const CoreOptionsIntl)).us);
+                true
+            }
+            ENVIRONMENT_SET_CORE_OPTIONS_V2 => {
+                register_v2(&mut s, data as *const CoreOptionsV2);
+                true
+            }
+            ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL => {
+                register_v2(&mut s, (*(data as *const CoreOptionsV2Intl)).us);
                 true
             }
             ENVIRONMENT_GET_VARIABLE_UPDATE => {
@@ -340,6 +559,215 @@ mod tests {
         ] {
             assert!(env(cmd, std::ptr::null_mut()), "cmd {cmd}");
         }
+    }
+
+    /// The value the callback answers for `key`, or None for a null value.
+    fn lookup(key: &str) -> Option<String> {
+        let key = CString::new(key).unwrap();
+        let mut var = Variable {
+            key: key.as_ptr(),
+            value: std::ptr::null(),
+        };
+        assert!(env(
+            ENVIRONMENT_GET_VARIABLE,
+            &mut var as *mut Variable as *mut c_void
+        ));
+        if var.value.is_null() {
+            None
+        } else {
+            // SAFETY: the callback set `value` to a CString it owns in `shared()`.
+            Some(
+                unsafe { CStr::from_ptr(var.value) }
+                    .to_str()
+                    .unwrap()
+                    .into(),
+            )
+        }
+    }
+
+    fn no_values() -> [CoreOptionValue; NUM_CORE_OPTION_VALUES_MAX] {
+        [CoreOptionValue {
+            value: std::ptr::null(),
+            label: std::ptr::null(),
+        }; NUM_CORE_OPTION_VALUES_MAX]
+    }
+
+    #[test]
+    fn set_variables_registers_the_first_listed_option_as_the_default() {
+        let _g = fresh();
+        let k1 = CString::new("snes9x_hires_blend").unwrap();
+        let v1 = CString::new("Hires blending; disabled|merge|blur").unwrap();
+        let k2 = CString::new("snes9x_region").unwrap();
+        let v2 = CString::new("Region; auto|ntsc|pal").unwrap();
+        let mut list = [
+            Variable {
+                key: k1.as_ptr(),
+                value: v1.as_ptr(),
+            },
+            Variable {
+                key: k2.as_ptr(),
+                value: v2.as_ptr(),
+            },
+            Variable {
+                key: std::ptr::null(),
+                value: std::ptr::null(),
+            },
+        ];
+        assert!(env(
+            ENVIRONMENT_SET_VARIABLES,
+            list.as_mut_ptr() as *mut c_void
+        ));
+        assert_eq!(lookup("snes9x_hires_blend").as_deref(), Some("disabled"));
+        assert_eq!(lookup("snes9x_region").as_deref(), Some("auto"));
+        assert_eq!(lookup("snes9x_other"), None);
+    }
+
+    #[test]
+    fn set_core_options_v1_uses_default_value_or_else_the_first_value() {
+        let _g = fresh();
+        let k1 = CString::new("a").unwrap();
+        let k2 = CString::new("b").unwrap();
+        let x = CString::new("x").unwrap();
+        let y = CString::new("y").unwrap();
+        let mut values = no_values();
+        values[0].value = x.as_ptr();
+        values[1].value = y.as_ptr();
+        let mut defs = [
+            CoreOptionDefinition {
+                key: k1.as_ptr(),
+                desc: std::ptr::null(),
+                info: std::ptr::null(),
+                values,
+                default_value: y.as_ptr(),
+            },
+            CoreOptionDefinition {
+                key: k2.as_ptr(),
+                desc: std::ptr::null(),
+                info: std::ptr::null(),
+                values,
+                default_value: std::ptr::null(),
+            },
+            CoreOptionDefinition {
+                key: std::ptr::null(),
+                desc: std::ptr::null(),
+                info: std::ptr::null(),
+                values: no_values(),
+                default_value: std::ptr::null(),
+            },
+        ];
+        assert!(env(
+            ENVIRONMENT_SET_CORE_OPTIONS,
+            defs.as_mut_ptr() as *mut c_void
+        ));
+        assert_eq!(lookup("a").as_deref(), Some("y"));
+        assert_eq!(lookup("b").as_deref(), Some("x"));
+
+        // The intl form carries the same table under `us`.
+        *shared() = Shared::default();
+        let mut intl = CoreOptionsIntl {
+            us: defs.as_mut_ptr(),
+            local: std::ptr::null_mut(),
+        };
+        assert!(env(
+            ENVIRONMENT_SET_CORE_OPTIONS_INTL,
+            &mut intl as *mut CoreOptionsIntl as *mut c_void
+        ));
+        assert_eq!(lookup("a").as_deref(), Some("y"));
+    }
+
+    #[test]
+    fn set_core_options_v2_and_its_intl_form_register_the_definitions() {
+        let _g = fresh();
+        let k = CString::new("snes9x_up_down_allowed").unwrap();
+        let dis = CString::new("disabled").unwrap();
+        let en = CString::new("enabled").unwrap();
+        let mut values = no_values();
+        values[0].value = dis.as_ptr();
+        values[1].value = en.as_ptr();
+        let mut defs = [
+            CoreOptionV2Definition {
+                key: k.as_ptr(),
+                desc: std::ptr::null(),
+                desc_categorized: std::ptr::null(),
+                info: std::ptr::null(),
+                info_categorized: std::ptr::null(),
+                category_key: std::ptr::null(),
+                values,
+                default_value: std::ptr::null(),
+            },
+            CoreOptionV2Definition {
+                key: std::ptr::null(),
+                desc: std::ptr::null(),
+                desc_categorized: std::ptr::null(),
+                info: std::ptr::null(),
+                info_categorized: std::ptr::null(),
+                category_key: std::ptr::null(),
+                values: no_values(),
+                default_value: std::ptr::null(),
+            },
+        ];
+        let mut v2 = CoreOptionsV2 {
+            categories: std::ptr::null_mut(),
+            definitions: defs.as_mut_ptr(),
+        };
+        assert!(env(
+            ENVIRONMENT_SET_CORE_OPTIONS_V2,
+            &mut v2 as *mut CoreOptionsV2 as *mut c_void
+        ));
+        assert_eq!(
+            lookup("snes9x_up_down_allowed").as_deref(),
+            Some("disabled")
+        );
+
+        *shared() = Shared::default();
+        let mut intl = CoreOptionsV2Intl {
+            us: &mut v2,
+            local: std::ptr::null_mut(),
+        };
+        assert!(env(
+            ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL,
+            &mut intl as *mut CoreOptionsV2Intl as *mut c_void
+        ));
+        assert_eq!(
+            lookup("snes9x_up_down_allowed").as_deref(),
+            Some("disabled")
+        );
+    }
+
+    #[test]
+    fn a_core_options_file_value_overrides_a_registered_default() {
+        let _g = fresh();
+        shared()
+            .options
+            .insert("snes9x_region".into(), CString::new("pal").unwrap());
+        let k = CString::new("snes9x_region").unwrap();
+        let v = CString::new("Region; auto|ntsc|pal").unwrap();
+        let mut list = [
+            Variable {
+                key: k.as_ptr(),
+                value: v.as_ptr(),
+            },
+            Variable {
+                key: std::ptr::null(),
+                value: std::ptr::null(),
+            },
+        ];
+        assert!(env(
+            ENVIRONMENT_SET_VARIABLES,
+            list.as_mut_ptr() as *mut c_void
+        ));
+        assert_eq!(lookup("snes9x_region").as_deref(), Some("pal"));
+    }
+
+    #[test]
+    fn core_options_version_probe_answers_two() {
+        let _g = fresh();
+        let mut version: c_uint = 0;
+        assert!(env(
+            ENVIRONMENT_GET_CORE_OPTIONS_VERSION,
+            &mut version as *mut c_uint as *mut c_void
+        ));
+        assert_eq!(version, 2);
     }
 
     #[test]
