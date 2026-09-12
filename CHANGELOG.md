@@ -10,17 +10,70 @@ Notable changes per release. Dates are the publish date.
   with the `com.apple.security.get-task-allow` entitlement, which
   `gpucapture` needs to attach to a process and which libretro's builds
   lack; it says so and changes nothing when the app already has it.
-  `retroarch::entitle` is the library side. The README explains the
-  requirement and the manual `codesign` equivalent.
+  `retroarch::entitle` is the library side.
+- `--aspect native|W:H|FLOAT`, for both backends. The hosted backend sizes
+  its output texture to the largest box of that aspect the window mode
+  allows, which is the viewport RetroArch draws into for the same
+  request; a core's reported aspect is honoured, as RetroArch does, where
+  the pixel aspect was used before. The RetroArch backend writes
+  `aspect_ratio_index` (and `video_aspect_ratio` for an override).
+  `config::Aspect`, `Request.aspect`, `RunConfig.aspect`,
+  `AvInfo.aspect_ratio`, and `render::display_size`.
+- `--param NAME=VALUE` (repeatable) overrides a preset parameter under
+  either backend: the run renders a wrapper preset in its temp dir that
+  references `--shader` with the values pinned. `preset::Param` and
+  `preset::write_override_preset`; `Request.params`.
+- `--overwrite`. A `.gputrace` already at `--output` is now refused
+  unless it is given, instead of removed silently; `prepare_output` takes
+  the flag and `Request.overwrite` carries it.
 
 ### Changed
 
+- Ctrl-C under the RetroArch backend now unwinds the run like the hosted
+  backend does: the temp dir is removed, a partial bundle is discarded,
+  and the binary prints "interrupted" with exit status 130, where the
+  handler used to exit from its own thread and leave both behind. The
+  handler still SIGKILLs the launched RetroArch at once. A second Ctrl-C
+  exits 130 immediately under either backend, for a run stuck somewhere
+  that never polls. The shared `interrupt` module replaces
+  `hosted::interrupt`.
+- A capture that fails after `gpucapture start` began writing discards
+  the partial bundle on every error path, not only the missing-index one.
 - The RetroArch backend fails as soon as `gpucapture list` shows its
   RetroArch as `[non-debuggable]`, naming the app and the `entitle`
   command, instead of passing the capturability wait and failing later
   inside `gpucapture start`. `retroarch::capture::parse_listing` and
-  `Listed` replace `parse_capturable_pids`, and `CaptureOptions` gains
-  `app` for that message.
+  `Listed` replace `parse_capturable_pids`; `CaptureOptions` gains `app`
+  and `overwrite`.
+- `--slot N` under the RetroArch backend is checked before launch: the
+  slot file must exist in the states directory or one level below, else
+  the run fails suggesting `--state`, where RetroArch used to report the
+  miss on its OSD and the boot frame was captured with exit 0.
+  `state::find_slot`.
+- `--scale N` under the hosted backend is in points, like RetroArch's
+  window scale, so both backends produce the same pixel count on a
+  Retina display; it was pixels before.
+- The settle wait polls RetroArch's exit and the interrupt flag every
+  100 ms instead of sleeping through it.
+- `-v` keeps the RetroArch run's temp dir (`retroarch.cfg`,
+  `retroarch.log`) and prints its path; the log used to be deleted with
+  the dir on success.
+- A `--no-default-features` build no longer lists the librashader backend
+  or `--skip-extension-check` in `--help`; clap refuses them at parse time.
+- `--help` lists `--shader` and `--output` first, and `--advance` says how
+  the two backends differ.
+- The hosted backend checks the source frame's size against Metal's
+  limits as well as the output's, so a 0x0 or oversize core geometry is
+  an error rather than a Metal assertion.
+- An rzip save-state chunk may inflate at most one byte past the total
+  the header promises before decoding fails, where it used to inflate in
+  full first.
+- Library: `state::decode` and its helpers moved to `hosted::state`;
+  `core::resolve_core` folded into `layout`; `state::stage` returns `()`;
+  `config::expand_tilde` takes a `Path`; `render::check_output_size` is
+  `check_texture_size`; `render::output_size` takes the aspect; the
+  `objc2-foundation` and `nix` sub-features the hosted backend needs are
+  under the `librashader` feature.
 
 ## 0.5.0 - 2026-09-11
 

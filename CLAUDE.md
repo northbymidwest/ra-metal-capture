@@ -16,8 +16,9 @@ libretro core hosted in this same process (`--core` and `--rom`, with
 `--state` or `--slot` to restore a RetroArch save state).
 `ra-metal-capture entitle [--app PATH]` re-signs a RetroArch.app ad hoc
 with `com.apple.security.get-task-allow`, which `gpucapture` needs and
-libretro's builds lack. Requires macOS 27 and Xcode 27 at run time.
-Published on crates.io as `ra-metal-capture`.
+libretro's builds lack. `--aspect`, `--param NAME=VALUE`, and
+`--overwrite` apply to both backends. Requires macOS 27 and Xcode 27 at
+run time. Published on crates.io as `ra-metal-capture`.
 
 ## Commands
 
@@ -33,6 +34,7 @@ RUSTDOCFLAGS='-D warnings' cargo doc --no-deps
 ./scripts/check-ascii.sh                    # every tracked file must be ASCII
 cargo deny check licenses bans sources
 cargo machete
+git config core.hooksPath .githooks         # once per clone, for the pre-commit hook
 ```
 
 CI runs every check above in both feature shapes (default and
@@ -120,29 +122,47 @@ and the command, when RetroArch is listed without it.
 `launch::LaunchCommand`, and hands it to `capture::run` with a
 `capture::CaptureOptions`. `hosted/mod.rs` resolves the request into a
 `CoreRun` through `layout`, and `boot_core` opens the core, checks the ROM
-and finds and decodes the state before `init`, then boots it and hands
-the `render::FrameSource` to `render::run`. `bundle` (recognising and
-clearing a `.gputrace`, checking the output directory exists),
-`image_file` (the `--image` check against a backend's extension list),
-and `layout::DirResolver` (core, system directory, states, defaults first
-and `retroarch.cfg` only on a miss) are shared.
+and finds and decodes the state (`hosted::state`) before `init`, then
+boots it and hands the `render::FrameSource` to `render::run`. `bundle`
+(recognising a `.gputrace`, refusing one at the output unless
+`--overwrite`, checking the output directory exists), `image_file` (the
+`--image` check against a backend's extension list), `layout::DirResolver`
+(core, system directory, states, defaults first and `retroarch.cfg` only
+on a miss), and `preset` (the `--param` wrapper preset, a `#reference`
+plus `NAME = "VALUE"` lines, written into the run's temp dir and handed
+to either backend as the shader) are shared.
 
-Ctrl-C: the RetroArch backend's handler kills the launched process and
-exits 130 itself. The hosted backend cannot do that, because Metal is
-writing the bundle and the `Trace` guard lives on the render thread, so
-`hosted::interrupt` only raises a flag, the frame loops poll it, and the
-run unwinds through its error path (stop capture, remove the partial
-bundle) returning `backend::Interrupted`, which `main` maps to exit 130.
+Aspect: `config::Aspect` is `Native` or a ratio. The hosted backend's
+`render::output_size` starts from `display_size` (the source height, and
+the width that height needs at the aspect) and takes the largest box of
+that shape the window mode allows, because that is the viewport
+RetroArch draws into and what a shader's final OutputSize sees; `Scale`
+is in points. The RetroArch backend writes `aspect_ratio_index` 22 (core
+provided) or 20 plus `video_aspect_ratio`. A core's aspect comes from its
+AV info, falling back to the pixel aspect when it reports 0, as RetroArch
+does.
+
+Ctrl-C: one shared `interrupt` module. The handler raises a flag and
+SIGKILLs the RetroArch registered with it (a paused RetroArch never
+exits on its own); a second Ctrl-C exits 130 at once. Neither backend
+can clean up from the handler, because Metal or gpucapture is writing
+the bundle and the guards (`Trace`, the child guard, the temp dir) live
+on the run's thread, so every wait loop polls `interrupt::check` and the
+run unwinds through its error path returning `backend::Interrupted`,
+which `main` maps to exit 130. `capture::run` discards a partial bundle
+once, on any error exit, after `prepare_output` has made the path ours.
 
 `capture::run` spawns RetroArch under a drop guard that SIGKILLs it on any
 failure path, polls `gpucapture list` until the pid is capturable, then
-runs one of two triggers. **Settle** (no state) sleeps and runs
-`gpucapture start`. **Paused** (`--state` or `--slot`) connects to
+runs one of two triggers. **Settle** (no state) waits in 100 ms ticks
+(polling exit and Ctrl-C) and runs `gpucapture start`. **Paused** (`--state` or `--slot`) connects to
 RetroArch's UDP command interface via `remote::Remote`, pauses, sends
 `LOAD_STATE`, frame-advances, arms `gpucapture` on a thread, and keeps
 advancing until the capture closes, because a paused RetroArch only
 presents on a frame advance. The measured constants and their reasons are
-in the doc comments on `retroarch/capture.rs` and in the spec.
+in the doc comments on `retroarch/capture.rs` and in the spec. A `--slot`
+is checked with `state::find_slot` before launch, since RetroArch
+reports a missing one only on its OSD.
 
 `hosted/libretro/mod.rs` hosts a core in this process in four steps: `Core::open`
 dlopens the `.dylib` through `libloading`, resolves every `retro_*` symbol,
