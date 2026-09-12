@@ -13,7 +13,7 @@ Xcode's GPU debugger.
 
 - macOS 27+ and Xcode 27+
 - Rust 1.98+
-- RetroArch.app, only for the RetroArch backend (optional when built with the librashader feature, the default), entitled once with `ra-metal-capture entitle` (see [Making RetroArch.app capturable](#making-retroarchapp-capturable))
+- RetroArch.app, only for the RetroArch backend (optional when built with the librashader feature, the default)
 
 ## Install
 
@@ -57,35 +57,6 @@ ra-metal-capture \
   --output /tmp/game-ra.gputrace
 ```
 
-Override the viewport aspect and a preset parameter, and replace a
-bundle already at the output path:
-
-```
-ra-metal-capture \
-  --image fixtures/sample.png \
-  --shader "$HOME/Library/Application Support/RetroArch/shaders/shaders_slang/handheld/zfast-lcd.slangp" \
-  --aspect 4:3 \
-  --param BORDERMULT=20 \
-  --overwrite \
-  --output /tmp/sample.gputrace
-```
-
-`--aspect` takes `native` (the core's own aspect, or the image's pixels),
-a ratio like `4:3`, or a number. The frame is the largest box of that
-aspect the window mode allows, which is the viewport RetroArch draws
-into; with `--size` it can be smaller than the size given. `--param
-NAME=VALUE` repeats; the run renders a wrapper preset that references
-`--shader` with those values pinned, and either backend silently ignores
-a name the preset does not declare.
-
-With a save state, `--advance N` runs N frames after loading it. Under
-the librashader backend the last of those is the first frame recorded;
-under RetroArch the capture is armed after it and closes a few advances
-later, and the tool prints how many.
-
-The examples use RetroArch's shader pack. On a machine without it, the
-same presets are at https://github.com/libretro/slang-shaders.
-
 `ra-metal-capture --help` lists every flag.
 
 ## Backends
@@ -110,20 +81,15 @@ gives a RetroArch-only tool.
 
 The RetroArch backend needs RetroArch.app to carry the
 `com.apple.security.get-task-allow` entitlement, which `gpucapture`
-requires of any process it attaches to and which libretro's builds do not
-have. The tool adds it for you:
+requires of any process it attaches to and which libretro's builds lack.
+The tool adds it:
 
 ```
 ra-metal-capture entitle
 ```
 
-It says what it is about to do and asks for a `[Y/n]` before touching
-the app; `--yes` skips the question. Pass `--app` for a bundle somewhere
-other than `/Applications/RetroArch.app`. The app is re-signed ad hoc, which drops libretro's notarization, so if
-macOS refuses to open it afterwards, open it once from the Finder with
-Control-click and Open. Run the command again after every RetroArch
-update; when the app already has the entitlement it says so and changes
-nothing. The librashader backend does not need any of this.
+It asks before re-signing the app ad hoc, and needs running again after
+a RetroArch update. `ra-metal-capture entitle --help` lists its flags.
 
 ## License
 
