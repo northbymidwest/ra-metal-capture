@@ -2,7 +2,7 @@
 
 Notable changes per release. Dates are the publish date.
 
-## Unreleased
+## 0.7.1 - 2026-09-14
 
 ### Changed
 
@@ -11,8 +11,11 @@ Notable changes per release. Dates are the publish date.
   the header, its commit hash, and its README together; `regen`
   regenerates from what is vendored. The `xtask/` workspace member
   replaces the generator under `tools/` and its shell script.
-- `libretro.h` is vendored at RetroArch `65e1840c` (VFS API v5); nothing
-  this tool uses changed.
+- `libretro.h` is vendored at RetroArch `65e1840c` (VFS API v5). The
+  header now declares the `XRGB2101010` and `HDR10_2101010` pixel
+  formats and five HDR environment queries; the hosted backend refuses
+  those formats and leaves the queries unanswered, as before, so a core
+  falls back to a format it reads. Nothing else this tool uses changed.
 
 ## 0.7.0 - 2026-09-12
 
