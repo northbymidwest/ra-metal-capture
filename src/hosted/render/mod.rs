@@ -268,8 +268,8 @@ pub fn run(mut opts: RenderOptions) -> Result<()> {
     let aspect = opts.aspect.ratio_or(opts.source.aspect_ratio());
     let size = output_size(&opts.window, image_size, aspect, &opts.screen);
     check_texture_size(size).context("the output")?;
-    let output_format = output_pixel_format(opts.hdr.mode);
     let mut image_format = opts.source.format();
+    let output_format = output_pixel_format(opts.hdr.mode, image_format);
     if opts.verbose {
         eprintln!(
             "source {}x{} {} at aspect {aspect:.4} -> output {}x{} {} px, {} warm-up + {} recorded frame(s)",
@@ -526,14 +526,17 @@ pub fn output_size(mode: &WindowMode, image: Size, aspect: f64, screen: &Screen)
     }
 }
 
-/// The output texture's format per HDR mode: RetroArch's SDR swapchain
-/// is BGRA8; its HDR10 swapchain is 10-bit PQ, and the preset's final
-/// pass renders straight into it, as it does in RetroArch's Vulkan
-/// driver for an HDR10 source or an HDR10-emitting preset.
-pub fn output_pixel_format(mode: HdrMode) -> MTLPixelFormat {
-    match mode {
-        HdrMode::Off => MTLPixelFormat::BGRA8Unorm,
-        HdrMode::Hdr10 => MTLPixelFormat::RGB10A2Unorm,
+/// The output texture's format. An SDR source without HDR renders into
+/// BGRA8, RetroArch's default swapchain. A 10-bit source keeps 10 bits
+/// even without HDR, so the precision a core paid for reaches the final
+/// pass and the answer to `GET_SCREEN_10BPC_CAPABLE` is honest; RetroArch
+/// offers the same as its opt-in 10-bit SDR swapchain. Under HDR10 the
+/// output is 10-bit PQ, RetroArch's HDR10 swapchain format, which the
+/// preset's final pass renders straight into.
+pub fn output_pixel_format(mode: HdrMode, source: FrameFormat) -> MTLPixelFormat {
+    match (mode, source) {
+        (HdrMode::Off, FrameFormat::Bgra8) => MTLPixelFormat::BGRA8Unorm,
+        (HdrMode::Off, FrameFormat::Bgr10a2) | (HdrMode::Hdr10, _) => MTLPixelFormat::RGB10A2Unorm,
     }
 }
 
@@ -633,9 +636,15 @@ mod tests {
         assert_eq!(frame.pixels.len(), 4 * 4 * 4);
         let px = |i: usize| -> [u8; 4] { frame.pixels[i * 4..i * 4 + 4].try_into().unwrap() };
         let white = quantise(pq_encode(200.0), 1023.0) as u16;
-        let bright = quantise(pq_encode(800.0), 1023.0) as u16;
+        // 4x paper white under the default 1000 nit peak (5x, 4x of
+        // headroom) rolls off to 1 + 4 * 3 / 7 of paper white.
+        let bright = quantise(pq_encode(200.0 * (1.0 + 4.0 * 3.0 / 7.0)), 1023.0) as u16;
         assert_eq!(px(0), px10(white, white, white), "paper white");
-        assert_eq!(px(1), px10(bright, bright, bright), "4x paper white");
+        assert_eq!(
+            px(1),
+            px10(bright, bright, bright),
+            "4x paper white, rolled off"
+        );
         assert_eq!(px(2), px10(0, 0, 0), "black");
         assert_eq!(px(4), px10(white, 0, 0), "red, no rotation under super");
     }
@@ -914,13 +923,21 @@ mod tests {
     }
 
     #[test]
-    fn output_is_bgra8_off_and_rgb10a2_under_hdr10() {
+    fn output_is_bgra8_only_for_an_sdr_source_without_hdr() {
         assert_eq!(
-            output_pixel_format(HdrMode::Off),
+            output_pixel_format(HdrMode::Off, FrameFormat::Bgra8),
             MTLPixelFormat::BGRA8Unorm
         );
         assert_eq!(
-            output_pixel_format(HdrMode::Hdr10),
+            output_pixel_format(HdrMode::Off, FrameFormat::Bgr10a2),
+            MTLPixelFormat::RGB10A2Unorm
+        );
+        assert_eq!(
+            output_pixel_format(HdrMode::Hdr10, FrameFormat::Bgra8),
+            MTLPixelFormat::RGB10A2Unorm
+        );
+        assert_eq!(
+            output_pixel_format(HdrMode::Hdr10, FrameFormat::Bgr10a2),
             MTLPixelFormat::RGB10A2Unorm
         );
     }
@@ -971,13 +988,15 @@ mod tests {
             let i = (y * 160 + x) * 4;
             (u32::from_le_bytes(frame.pixels[i..i + 4].try_into().unwrap()) >> 20) & 0x3FF
         }
-        // With a 2000 nit peak the sun's centre (140, 13), pure red at 8x
-        // paper white, is 1600 nits; the sky at (0, 0) is well below paper
-        // white in red.
-        assert_eq!(red(frame, 140, 13), quantise(pq_encode(1600.0), 1023.0));
+        // With a 2000 nit peak (10x paper white, 9x of headroom) the sun's
+        // centre (140, 13), pure red at 8x paper white, rolls off to
+        // 1 + 9 * 7 / 16 = 4.9375x, 987.5 nits; the sky at (0, 0) is well
+        // below paper white in red.
+        assert_eq!(red(frame, 140, 13), quantise(pq_encode(987.5), 1023.0));
         assert!(red(frame, 0, 0) < quantise(pq_encode(200.0), 1023.0));
 
-        // At the default 1000 nit peak the same sun clips to the peak's code.
+        // At the default 1000 nit peak (5x, 4x of headroom) the same sun
+        // rolls off to 1 + 4 * 7 / 11 of paper white.
         let mut src = ImageSource::open(
             Path::new("fixtures/sample.hdr"),
             &Hdr {
@@ -988,7 +1007,10 @@ mod tests {
         )
         .unwrap();
         let frame = src.next().unwrap();
-        assert_eq!(red(frame, 140, 13), quantise(pq_encode(1000.0), 1023.0));
+        assert_eq!(
+            red(frame, 140, 13),
+            quantise(pq_encode(200.0 * (1.0 + 4.0 * 7.0 / 11.0)), 1023.0)
+        );
 
         // Without HDR the sun clips to white and the sky keeps its sRGB value.
         let mut src = ImageSource::open(Path::new("fixtures/sample.hdr"), &Hdr::default()).unwrap();

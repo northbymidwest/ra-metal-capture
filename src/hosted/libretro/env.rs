@@ -343,7 +343,9 @@ pub unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
             // may read all buttons in one call.
             GET_INPUT_BITMASKS => true,
             // The HDR queries, answered whatever the mode, as RetroArch
-            // does. The input texture is 10-bit here, so 10bpc is real.
+            // does. 10bpc is real: a 10-bit frame is uploaded as a 10-bit
+            // texture and rendered into a 10-bit output (render::
+            // output_pixel_format), so nothing narrows it.
             GET_SCREEN_10BPC_CAPABLE => {
                 *(data as *mut bool) = true;
                 true

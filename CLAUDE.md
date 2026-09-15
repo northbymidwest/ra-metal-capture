@@ -239,9 +239,13 @@ unfinished capture). The frame count advances across both phases. Preset
 compilation happens before the capture starts so only the recorded frame
 command buffers land in the bundle. The input texture takes the frame's
 format (`BGRA8Unorm` or `BGR10A2Unorm`, re-created on a size or format
-change); the output is `BGRA8Unorm`, or `RGB10A2Unorm` under `--hdr
-hdr10`, RetroArch's HDR10 swapchain format, and every frame renders
-with librashader's frame options carrying the HDR uniforms.
+change); the output is `BGRA8Unorm` for an 8-bit source without HDR,
+otherwise `RGB10A2Unorm` (a 10-bit source keeps its bits, RetroArch's
+opt-in 10-bit SDR swapchain; under `--hdr hdr10` it is RetroArch's
+HDR10 swapchain format), and every frame renders with librashader's
+frame options carrying the HDR uniforms. `hdr::encode_hdr10` rolls
+highlights off toward `--hdr-max-nits` rather than clipping, this
+tool's choice (RetroArch's HDR10 path has no roll-off).
 `ImageSource` turns a Radiance file into a `Bgr10a2` frame through the
 shared `hdr` module (PQ under `Hdr10`, sRGB otherwise). The frontend's
 HDR composite pass is not reproduced. `output_size` maps the shared
@@ -251,7 +255,10 @@ default fill use `display::Screen`'s backing scale.
 
 `retroarch::runconfig::RunConfig` is the single place RetroArch settings
 are set; `config::WindowMode` is shared by both backends. The four
-`video_hdr_*` keys are written every run from `config::Hdr`.
+`video_hdr_*` keys are written every run from `config::Hdr`, plus
+`video_hdr_scanlines = "false"` and `video_hdr_subpixel_layout = "0"`,
+since RetroArch's HDR composite adds a scanline and mask pass by
+default that the hosted backend never draws.
 The source tree mirrors the split: shared modules at the top of `src/`,
 everything RetroArch-only under `src/retroarch/`, everything in-process
 under `src/hosted/` behind the feature. `display`

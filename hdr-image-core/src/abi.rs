@@ -93,6 +93,40 @@ fn choose_format() -> Option<Format> {
 /// The frontend's HDR settings through the three queries an encoder
 /// needs, each keeping libretro.h's fallback when unrecognised. `mode`
 /// is not queried: the format the frontend accepted already says.
+/// What the frontend says about its output, beyond the settings an
+/// encoder needs: whether a 10-bit source reaches the display as such
+/// (`false` when the query is unknown, as libretro.h says to assume) and
+/// which HDR swapchain it presents with (0 off, 1 HDR10, 2 scRGB; 1 when
+/// unknown).
+struct Output {
+    ten_bit: bool,
+    hdr_mode: u32,
+}
+
+fn query_output() -> Output {
+    let mut ten_bit = false;
+    let mut hdr_mode = 1u32;
+    // SAFETY: each pointer is the type libretro.h documents for its
+    // query (`bool *`, `unsigned *`), backed by a live local.
+    unsafe {
+        let mut capable = false;
+        if environ(
+            sys::RETRO_ENVIRONMENT_GET_SCREEN_10BPC_CAPABLE,
+            &mut capable as *mut bool as *mut c_void,
+        ) {
+            ten_bit = capable;
+        }
+        let mut mode = 0u32;
+        if environ(
+            sys::RETRO_ENVIRONMENT_GET_HDR_OUTPUT_MODE,
+            &mut mode as *mut c_uint as *mut c_void,
+        ) {
+            hdr_mode = mode;
+        }
+    }
+    Output { ten_bit, hdr_mode }
+}
+
 fn query_settings() -> Hdr {
     let mut s = Hdr::default();
     let mut white = 0f32;
@@ -318,9 +352,10 @@ pub unsafe extern "C" fn retro_load_game(game: *const sys::retro_game_info) -> b
             Format::Hdr10 => HdrMode::Hdr10,
             Format::Xrgb2101010 | Format::Xrgb8888 => HdrMode::Off,
         };
+        let output = query_output();
         let (width, height) = content.size();
         eprintln!(
-            "[hdr-image] {}x{} {} content as {format:?}; paper white {} nits, peak {} nits, gamut {}",
+            "[hdr-image] {}x{} {} content as {format:?}; paper white {} nits, peak {} nits, gamut {}; 10-bit presented: {}, HDR output mode {}",
             width,
             height,
             match content {
@@ -329,8 +364,18 @@ pub unsafe extern "C" fn retro_load_game(game: *const sys::retro_game_info) -> b
             },
             settings.paper_white_nits,
             settings.max_nits,
-            settings.expand_gamut.as_u32()
+            settings.expand_gamut.as_u32(),
+            output.ten_bit,
+            output.hdr_mode
         );
+        // An scRGB swapchain rotates the PQ samples Rec.2020 to Rec.709 on
+        // the way out (libretro.h's GET_HDR_OUTPUT_MODE); this core encodes
+        // for HDR10 only and says so rather than compensating.
+        if format == Format::Hdr10 && output.hdr_mode == 2 {
+            eprintln!(
+                "[hdr-image] the frontend presents scRGB; this core encodes for an HDR10 swapchain, so colours will be rotated"
+            );
+        }
         let frame = encode(&content, format, &settings);
         *loaded() = Some(Loaded {
             width,

@@ -118,6 +118,11 @@ impl RunConfig {
                 "video_hdr_expand_gamut",
                 self.hdr.expand_gamut.as_u32().to_string(),
             ),
+            // RetroArch's HDR composite adds a CRT scanline and subpixel
+            // mask by default; the hosted backend draws neither, and the
+            // trace should hold the preset alone.
+            ("video_hdr_scanlines", "false".into()),
+            ("video_hdr_subpixel_layout", "0".into()),
         ];
         // RetroArch's `enum aspect_ratio`: ASPECT_RATIO_CONFIG is 20,
         // ASPECT_RATIO_CORE is 22 (gfx/video_defines.h at 1.22).
@@ -218,6 +223,8 @@ video_hdr_mode = \"0\"\n\
 video_hdr_paper_white_nits = \"200.000000\"\n\
 video_hdr_max_nits = \"1000.000000\"\n\
 video_hdr_expand_gamut = \"0\"\n\
+video_hdr_scanlines = \"false\"\n\
+video_hdr_subpixel_layout = \"0\"\n\
 aspect_ratio_index = \"22\"\n";
 
     fn base(window: WindowMode) -> RunConfig {

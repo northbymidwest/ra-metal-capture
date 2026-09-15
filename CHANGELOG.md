@@ -9,12 +9,15 @@ Notable changes per release. Dates are the publish date.
 - `--hdr hdr10`, with `--hdr-paper-white`, `--hdr-max-nits`, and
   `--hdr-gamut`: RetroArch's HDR settings, applied to both backends. The
   hosted backend renders into a 10-bit PQ output with librashader's HDR
-  uniforms set; the RetroArch backend writes the settings into its run
+  uniforms set, rolling highlights off toward the peak rather than
+  clipping; the RetroArch backend writes the settings into its run
   config (a RetroArch newer than July 2026 honours them; 1.22.x ignores
-  them).
+  them) and pins the HDR composite's scanline and subpixel-mask pass
+  off, so a capture holds the preset alone.
 - A Radiance `.hdr` image given to `--image` is a 10-bit source: PQ
   under `--hdr hdr10`, sRGB otherwise, encoded as RetroArch's HDR shader
-  would. PNG and JPEG stay 8-bit.
+  would. PNG and JPEG stay 8-bit. A 10-bit source renders into a 10-bit
+  output even without `--hdr`, RetroArch's opt-in 10-bit SDR swapchain.
 - The hosted backend accepts libretro's `XRGB2101010` pixel format under
   either setting and `HDR10_2101010` under `--hdr hdr10`, uploading both
   unconverted into a 10-bit input texture, as RetroArch's Metal driver
@@ -29,6 +32,13 @@ Notable changes per release. Dates are the publish date.
   sun at eight times paper white, written by `scripts/gen-sample.py`
   alongside the PNG; `fixtures/probe.hdr` is the 4x4 image the tests
   check exact values against.
+
+### Changed
+
+- A Radiance `.hdr` given to `--image` used to be squashed to 8 bits by
+  the image crate's RGBA8 conversion, with no transfer function; it is
+  now decoded as linear light with 1.0 at paper white, so the same file
+  renders brighter and keeps its highlights.
 
 ## 0.7.1 - 2026-09-14
 

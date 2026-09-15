@@ -89,14 +89,38 @@ pub fn quantise(v: f32, max: f32) -> u32 {
     (v.clamp(0.0, 1.0) * max).round() as u32
 }
 
-/// One HDR10 pixel from linear Rec.709 with 1.0 at paper white: rotated
-/// per the gamut setting, scaled to nits, clipped at the peak (never
-/// below paper white, the header's "zero headroom" reading of a lower
-/// peak), PQ-encoded, and quantised to 10 bits.
+/// Roll a linear pixel (1.0 at paper white) off toward the peak, given
+/// as a ratio to paper white: values up to paper white are untouched,
+/// and the excess above it is compressed so the brightest channel
+/// approaches the peak without reaching it, every channel scaled by the
+/// same factor so hue holds. libretro.h calls the peak "a ceiling to
+/// roll off toward rather than a level to target". RetroArch's own HDR10
+/// path applies no roll-off (its shader's `Tonemap` also darkens paper
+/// white, so the shader never uses it there); this knee is this tool's
+/// choice, not the shader's. A peak at or below paper white is zero
+/// headroom: everything above paper white lands exactly at it.
+pub fn roll_off(rgb: [f32; 3], peak_ratio: f32) -> [f32; 3] {
+    let brightest = rgb[0].max(rgb[1]).max(rgb[2]);
+    if brightest <= 1.0 {
+        return rgb;
+    }
+    let headroom = (peak_ratio - 1.0).max(0.0);
+    let excess = brightest - 1.0;
+    let rolled = 1.0 + headroom * excess / (excess + headroom);
+    rgb.map(|c| c * rolled / brightest)
+}
+
+/// One HDR10 pixel from linear Rec.709 with 1.0 at paper white: rolled
+/// off toward the peak ([`roll_off`]), rotated per the gamut setting,
+/// scaled to nits, PQ-encoded, and quantised to 10 bits.
 pub fn encode_hdr10(linear: [f32; 3], hdr: &Hdr) -> u32 {
-    let peak = hdr.max_nits.max(hdr.paper_white_nits);
-    let [r, g, b] = to_2020(linear, hdr.expand_gamut)
-        .map(|v| quantise(pq_encode((v * hdr.paper_white_nits).min(peak)), 1023.0) as u16);
+    let peak_ratio = if hdr.paper_white_nits > 0.0 {
+        hdr.max_nits / hdr.paper_white_nits
+    } else {
+        1.0
+    };
+    let [r, g, b] = to_2020(roll_off(linear, peak_ratio), hdr.expand_gamut)
+        .map(|v| quantise(pq_encode(v * hdr.paper_white_nits), 1023.0) as u16);
     pack_2101010(r, g, b)
 }
 
@@ -173,7 +197,24 @@ mod tests {
     }
 
     #[test]
-    fn hdr10_white_sits_at_paper_white_and_highlights_clip_at_the_peak() {
+    fn roll_off_keeps_sdr_and_compresses_highlights_toward_the_peak() {
+        assert_eq!(roll_off([0.5, 0.25, 1.0], 5.0), [0.5, 0.25, 1.0]);
+        // 8x paper white under a 10x peak: 1 + 9 * 7 / 16 on the brightest
+        // channel, the others scaled with it.
+        let [r, g, b] = roll_off([8.0, 4.0, 0.0], 10.0);
+        assert_eq!(r, 4.9375);
+        assert_eq!(g, 4.9375 / 2.0);
+        assert_eq!(b, 0.0);
+        // Far above the peak the brightest channel approaches the peak.
+        let [r, _, _] = roll_off([1.0e6, 1.0e6, 1.0e6], 5.0);
+        assert!(r > 4.99 && r < 5.0, "{r}");
+        // Zero headroom: a peak at or below paper white pins to paper white.
+        assert_eq!(roll_off([10.0, 10.0, 10.0], 1.0), [1.0, 1.0, 1.0]);
+        assert_eq!(roll_off([10.0, 5.0, 10.0], 0.5), [1.0, 0.5, 1.0]);
+    }
+
+    #[test]
+    fn hdr10_white_sits_at_paper_white_and_highlights_roll_off_toward_the_peak() {
         let s = Hdr {
             mode: HdrMode::Hdr10,
             paper_white_nits: 200.0,
@@ -185,9 +226,13 @@ mod tests {
             encode_hdr10([1.0, 1.0, 1.0], &s),
             pack_2101010(code, code, code)
         );
-        // 100x paper white clips at the 1000 nit peak: code 769.
+        // 100x paper white rolls off below the 1000 nit peak (code 769)
+        // and stays above paper white; a value far beyond the peak reaches
+        // the peak's code without passing it.
+        let hundred = (encode_hdr10([100.0, 100.0, 100.0], &s) >> 20) & 0x3FF;
+        assert!(hundred > u32::from(code) && hundred < 769, "{hundred}");
         assert_eq!(
-            encode_hdr10([100.0, 100.0, 100.0], &s),
+            encode_hdr10([1.0e6, 1.0e6, 1.0e6], &s),
             pack_2101010(769, 769, 769)
         );
         // A peak below paper white is zero headroom, not a negative range.
