@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate fixtures/sample.png, the 160x144 fixture, within Game Boy Color limits.
+"""Generate fixtures/sample.png and fixtures/sample.hdr, the 160x144 fixtures, within Game Boy Color limits.
 
 The scene (a cartoon house, an apple tree with a tire swing, grass, sky,
 one cloud, the sun) is drawn on the GBC's 8x8 tile grid and checked
@@ -15,10 +15,11 @@ against the hardware's rules before the PNG is written:
 Pure Python, no dependencies; the PNG is written by hand. The output is
 this repository's own work and carries its licence (0BSD).
 
-    scripts/gen-sample.py            # writes fixtures/sample.png
-    scripts/gen-sample.py OUT.png    # writes elsewhere
+    scripts/gen-sample.py            # writes fixtures/sample.png and fixtures/sample.hdr
+    scripts/gen-sample.py OUT.png    # writes OUT.png and OUT.hdr
 """
 
+import math
 import struct
 import sys
 import zlib
@@ -67,6 +68,28 @@ TIRE = rgb555(5, 5, 6)
 TIRE_HI = rgb555(11, 11, 12)
 
 TRANSPARENT = None
+
+# The HDR fixture: linear light in multiples of paper white. Everything
+# is the SDR scene at 1.0 except the sun, which is what HDR is for, and
+# the cloud, a touch above white.
+EMISSION = {SUN: 8.0, SUN_RIM: 4.0, WHITE: 1.25}
+
+
+def srgb_to_linear(v):
+    """sRGB's transfer function, 8-bit in, linear 0..1 out."""
+    v /= 255.0
+    return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+
+
+def rgbe(r, g, b):
+    """Radiance's shared-exponent pixel: a mantissa per channel and one
+    power of two, which decoders reproduce exactly."""
+    m = max(r, g, b)
+    if m < 1e-32:
+        return bytes([0, 0, 0, 0])
+    mant, exp = math.frexp(m)
+    scale = mant * 256.0 / m
+    return bytes([int(r * scale), int(g * scale), int(b * scale), exp + 128])
 
 
 class Layer:
@@ -320,13 +343,32 @@ def write_png(path, layer):
     Path(path).write_bytes(png)
 
 
+def write_hdr(path, layer):
+    """Radiance RGBE with new-style RLE scanlines holding literal runs
+    only, the encoding every decoder accepts for rows wider than 8."""
+    out = bytearray(b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n" + f"-Y {H} +X {W}\n".encode())
+    for row in layer.px:
+        pixels = [rgbe(*(srgb_to_linear(c) * EMISSION.get(px, 1.0) for c in px)) for px in row]
+        out += bytes([2, 2, W >> 8, W & 0xFF])
+        for comp in range(4):
+            data = bytes(p[comp] for p in pixels)
+            for i in range(0, W, 128):
+                chunk = data[i : i + 128]
+                out += bytes([len(chunk)]) + chunk
+    Path(path).write_bytes(bytes(out))
+
+
 def main():
-    out = sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent / "fixtures" / "sample.png"
+    out = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent / "fixtures" / "sample.png"
     bg = draw_background()
     sprites = draw_sprites()
     n_bg, n_obj = check(bg, sprites)
-    write_png(out, composite(bg, sprites))
+    scene = composite(bg, sprites)
+    write_png(out, scene)
+    hdr = out.with_suffix(".hdr")
+    write_hdr(hdr, scene)
     print(f"wrote {out}: {W}x{H}, {n_bg} background palettes, {len(sprites)} sprites in {n_obj} palettes")
+    print(f"wrote {hdr}: the same scene, sun at {EMISSION[SUN]:g}x paper white")
 
 
 if __name__ == "__main__":

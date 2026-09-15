@@ -6,7 +6,7 @@
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use ra_metal_capture::backend::{Backend, Interrupted, Request, Source, StateSource};
-use ra_metal_capture::config::{self, Aspect, Size, WindowMode};
+use ra_metal_capture::config::{self, Aspect, Gamut, Hdr, HdrMode, Size, WindowMode};
 use ra_metal_capture::display;
 use ra_metal_capture::preset::Param;
 use ra_metal_capture::retroarch::{DEFAULT_APP, DEFAULT_CMD_PORT, RetroArch};
@@ -29,6 +29,55 @@ fn parse_settle(s: &str) -> std::result::Result<f64, String> {
         ));
     }
     Ok(v)
+}
+
+/// RetroArch's paper-white range in nits, its menu bounds.
+const PAPER_WHITE_RANGE: std::ops::RangeInclusive<f32> = 0.0..=10000.0;
+/// RetroArch's peak-brightness range in nits, its menu bounds.
+const MAX_NITS_RANGE: std::ops::RangeInclusive<f32> = 100.0..=10000.0;
+
+fn parse_nits(
+    s: &str,
+    what: &str,
+    range: &std::ops::RangeInclusive<f32>,
+) -> std::result::Result<f32, String> {
+    let v: f32 = s.parse().map_err(|_| format!("not a number: {s:?}"))?;
+    if !v.is_finite() || !range.contains(&v) {
+        return Err(format!(
+            "{what} must be between {} and {} nits, got {s:?}",
+            range.start(),
+            range.end()
+        ));
+    }
+    Ok(v)
+}
+
+fn parse_paper_white(s: &str) -> std::result::Result<f32, String> {
+    parse_nits(s, "paper white", &PAPER_WHITE_RANGE)
+}
+
+fn parse_max_nits(s: &str) -> std::result::Result<f32, String> {
+    parse_nits(s, "max nits", &MAX_NITS_RANGE)
+}
+
+/// `--hdr` values: the RetroArch HDR output modes this tool offers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum HdrChoice {
+    /// A 10-bit PQ (ST.2084, Rec.2020) output, RetroArch's HDR10 mode
+    Hdr10,
+}
+
+/// `--hdr-gamut` values, RetroArch's "Colour Boost" entries in its order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum GamutChoice {
+    /// Rec.709 to Rec.2020, no boost
+    Accurate,
+    /// Rec.709 to a slightly wider space
+    Expanded,
+    /// Rec.709 to DCI-P3
+    Wide,
+    /// No rotation at all
+    Super,
 }
 
 /// Which backend a run uses.
@@ -173,6 +222,29 @@ struct Cli {
     #[arg(long, value_name = "NAME=VALUE")]
     param: Vec<Param>,
 
+    /// HDR output: hdr10 renders into a 10-bit PQ output (librashader) or
+    /// turns on RetroArch's HDR10 output (retroarch, on a RetroArch newer
+    /// than July 2026; the shipped 1.22.x ignores it), and lets a core
+    /// select the HDR10_2101010 pixel format. Off when absent, and then a
+    /// core asking for HDR10 is refused, as RetroArch refuses it
+    #[arg(long, value_enum)]
+    hdr: Option<HdrChoice>,
+
+    /// Luminance of SDR white in nits, RetroArch's paper white setting
+    /// [default: 200]
+    #[arg(long, requires = "hdr", value_parser = parse_paper_white, allow_negative_numbers = true)]
+    hdr_paper_white: Option<f32>,
+
+    /// Display peak in nits, RetroArch's peak brightness setting
+    /// [default: 1000]
+    #[arg(long, requires = "hdr", value_parser = parse_max_nits, allow_negative_numbers = true)]
+    hdr_max_nits: Option<f32>,
+
+    /// Gamut treatment of SDR content, RetroArch's colour boost setting
+    /// [default: accurate]
+    #[arg(long, requires = "hdr", value_enum)]
+    hdr_gamut: Option<GamutChoice>,
+
     /// Without a save state: emulated seconds to run a hosted core before
     /// recording (librashader), or seconds to wait before capturing (retroarch)
     #[arg(long, default_value_t = 5.0, value_parser = parse_settle, allow_negative_numbers = true)]
@@ -286,6 +358,26 @@ impl Cli {
             }
         }
     }
+
+    /// The HDR settings: the flags given, RetroArch's defaults otherwise.
+    fn hdr(&self) -> Hdr {
+        let defaults = Hdr::default();
+        Hdr {
+            mode: match self.hdr {
+                Some(HdrChoice::Hdr10) => HdrMode::Hdr10,
+                None => HdrMode::Off,
+            },
+            paper_white_nits: self.hdr_paper_white.unwrap_or(defaults.paper_white_nits),
+            max_nits: self.hdr_max_nits.unwrap_or(defaults.max_nits),
+            expand_gamut: match self.hdr_gamut {
+                None => defaults.expand_gamut,
+                Some(GamutChoice::Accurate) => Gamut::Accurate,
+                Some(GamutChoice::Expanded) => Gamut::Expanded,
+                Some(GamutChoice::Wide) => Gamut::Wide,
+                Some(GamutChoice::Super) => Gamut::Super,
+            },
+        }
+    }
 }
 
 /// The output path when `--output` is not given: the content's full file
@@ -386,6 +478,7 @@ fn build(cli: Cli) -> Result<(Box<dyn Backend>, Request)> {
         params: cli.param.clone(),
         window: cli.window_mode(),
         aspect: cli.aspect,
+        hdr: cli.hdr(),
         frames: cli.frames,
         settle: cli.settle,
         advance: cli.advance,
@@ -442,6 +535,67 @@ mod tests {
         let mut full = vec!["ra-metal-capture", "--shader", "p", "--output", "o"];
         full.extend_from_slice(args);
         Cli::try_parse_from(full)
+    }
+
+    #[test]
+    fn hdr_is_off_with_retroarchs_defaults() {
+        let cli = parse_rom(&[]).unwrap();
+        assert_eq!(cli.hdr(), Hdr::default());
+        assert_eq!(cli.hdr().mode, HdrMode::Off);
+    }
+
+    #[test]
+    fn hdr_flags_parse_into_the_settings() {
+        let cli = parse_rom(&[
+            "--hdr",
+            "hdr10",
+            "--hdr-paper-white",
+            "300",
+            "--hdr-max-nits",
+            "800",
+            "--hdr-gamut",
+            "wide",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.hdr(),
+            Hdr {
+                mode: HdrMode::Hdr10,
+                paper_white_nits: 300.0,
+                max_nits: 800.0,
+                expand_gamut: Gamut::Wide,
+            }
+        );
+        let cli = parse_rom(&["--hdr", "hdr10"]).unwrap();
+        assert_eq!(
+            cli.hdr(),
+            Hdr {
+                mode: HdrMode::Hdr10,
+                ..Hdr::default()
+            }
+        );
+    }
+
+    #[test]
+    fn hdr_value_flags_need_hdr() {
+        assert!(parse_rom(&["--hdr-paper-white", "300"]).is_err());
+        assert!(parse_rom(&["--hdr-max-nits", "800"]).is_err());
+        assert!(parse_rom(&["--hdr-gamut", "wide"]).is_err());
+    }
+
+    #[test]
+    fn hdr_values_are_range_checked() {
+        assert!(parse_rom(&["--hdr", "hdr10", "--hdr-paper-white=-1"]).is_err());
+        assert!(parse_rom(&["--hdr", "hdr10", "--hdr-paper-white", "10001"]).is_err());
+        assert!(parse_rom(&["--hdr", "hdr10", "--hdr-max-nits", "99"]).is_err());
+        assert!(parse_rom(&["--hdr", "hdr10", "--hdr-max-nits", "10001"]).is_err());
+        assert!(parse_rom(&["--hdr", "hdr10", "--hdr-max-nits", "nan"]).is_err());
+        assert!(parse_rom(&["--hdr", "hdr10", "--hdr-gamut", "vivid"]).is_err());
+        assert!(parse_rom(&["--hdr", "scrgb"]).is_err());
+        let err = parse_rom(&["--hdr", "hdr10", "--hdr-max-nits", "99"])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("between 100 and 10000"), "{err}");
     }
 
     #[test]

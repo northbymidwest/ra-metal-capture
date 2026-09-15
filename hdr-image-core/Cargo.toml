@@ -1,0 +1,21 @@
+[package]
+name = "hdr-image-core"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+description = "A libretro core whose content files are images, emitting HDR10, 10-bit SDR, or 8-bit frames as the frontend allows; ra-metal-capture's libretro paths are verified with it"
+license = "0BSD"
+
+# RetroArch and ra-metal-capture load cores by path, so the file name is
+# free; `<name>_libretro` follows libretro's convention.
+[lib]
+name = "hdr_image_libretro"
+crate-type = ["cdylib"]
+
+[dependencies]
+# The settings type, the encoding, and the generated bindings. The main
+# crate never depends on this one, so the path dependency does not block
+# publishing it, and cargo shares the build with the root's own.
+ra-metal-capture = { path = ".." }
+image = { version = "0.25.8", default-features = false, features = ["png", "jpeg", "hdr"] }

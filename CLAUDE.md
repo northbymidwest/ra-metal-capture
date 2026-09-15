@@ -14,6 +14,15 @@ in), or launch RetroArch.app and capture its presented frames with Apple's
 renders either a static image (`--image FILE`) or a software-rendered
 libretro core hosted in this same process (`--core` and `--rom`, with
 `--state` or `--slot` to restore a RetroArch save state).
+`--hdr hdr10` with `--hdr-paper-white`, `--hdr-max-nits`, and
+`--hdr-gamut` mirrors RetroArch's HDR settings in both backends and
+gates libretro's `HDR10_2101010` pixel format (the RetroArch backend
+needs a build newer than July 2026; 1.22.x ignores the keys);
+`XRGB2101010` is always accepted. A Radiance `--image` is a PQ or sRGB
+10-bit source.
+`hdr-image-core/` is a `publish = false` workspace member building a
+Rust libretro core whose content files are images, the source for the
+core-side paths (`cargo build -p hdr-image-core`).
 `ra-metal-capture entitle [--app PATH]` re-signs a RetroArch.app ad hoc
 with `com.apple.security.get-task-allow`, which `gpucapture` needs and
 libretro's builds lack. `--aspect`, `--param NAME=VALUE`, and
@@ -28,6 +37,9 @@ cargo test                                  # no RetroArch, Xcode, or GPU needed
 cargo test --no-default-features            # the RetroArch-only shape
 cargo test --lib hosted::render             # one module's tests
 cargo test image_mode_parses                # one test by name
+cargo build -p hdr-image-core               # the image viewer core, target/debug/libhdr_image_libretro.dylib
+cargo test -p hdr-image-core                # its content tests
+scripts/gen-sample.py                       # regenerates fixtures/sample.png and fixtures/sample.hdr
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check                           # the pre-commit hook enforces this
 RUSTDOCFLAGS='-D warnings' cargo doc --no-deps
@@ -62,7 +74,11 @@ The same command with `--backend retroarch` launches
 - `#![deny(unsafe_code)]` in `lib.rs` and `main.rs`. `unsafe` is allowed only
   inside `src/hosted/render/` and `src/hosted/libretro/`, each block with a `// SAFETY:`
   comment. The six `extern "C"` libretro callbacks in `src/hosted/libretro/env.rs`
-  are the only hand-written C ABI; they must never unwind.
+  are the only hand-written C ABI; they must never unwind. The one
+  other place is hdr-image-core/src/abi.rs, the image core's retro_*
+  exports: the same rule, every body that can fail under catch_unwind.
+  That crate depends on this one by path (never the reverse) and uses
+  hosted::libretro::sys, which is pub and doc-hidden for it.
 - All Metal and AppKit calls go through `objc2-metal`, `objc2-foundation`,
   and `objc2-app-kit`. Never write an `extern` block or hand-rolled FFI.
   libretro's types and constants are `src/hosted/libretro/sys.rs`,
@@ -143,9 +159,11 @@ boots it and hands the `render::FrameSource` to `render::run`. `bundle`
 `--overwrite`, checking the output directory exists), `image_file` (the
 `--image` check against a backend's extension list), `layout::DirResolver`
 (core, system directory, states, defaults first and `retroarch.cfg` only
-on a miss), and `preset` (the `--param` wrapper preset, a `#reference`
+on a miss), `preset` (the `--param` wrapper preset, a `#reference`
 plus `NAME = "VALUE"` lines, written into the run's temp dir and handed
-to either backend as the shader) are shared.
+to either backend as the shader), and `hdr` (the PQ, gamut, and
+packing math mirrored from RetroArch's HDR shader, used by image mode
+and by hdr-image-core) are shared.
 
 Aspect: `config::Aspect` is `Native` or a ratio. The hosted backend's
 `render::output_size` starts from `display_size` (the source height, and
@@ -201,8 +219,15 @@ through `SET_VARIABLES` or any `SET_CORE_OPTIONS` form and answers
 never a null value for a registered key: snes9x's `update_variables`
 takes `true` as "a value is present" and would `strcmp` a null. A core's
 frames may change size mid-run; `render::run` re-creates its input
-texture when one does, while the output keeps its boot size. A `Core` is a `render::FrameSource`, which is how
-emulated frames reach the render loop.
+texture when one does, while the output keeps its boot size. A frame
+carries its `FrameFormat`: `Bgra8` for the three classic pixel formats
+after conversion, `Bgr10a2` for `XRGB2101010` and `HDR10_2101010`,
+which `pixels::to_frame` copies row by row with the two high bits
+forced to 1. The environment callback accepts `XRGB2101010` always and
+HDR10 only when the request's `HdrMode` is `Hdr10` (RetroArch's gate),
+and answers the five HDR queries from `config::Hdr` whatever the mode.
+A `Core` is a `render::FrameSource`, which is how emulated frames
+reach the render loop.
 
 `hosted/render/mod.rs` builds BGRA8 textures, loads the preset with
 `librashader::runtime::mtl::FilterChain`, and runs a two-phase loop over a
@@ -212,13 +237,21 @@ command buffers are rendered between `Trace::start` and `Trace::finish`
 (`hosted/render/trace.rs`, a guard over `MTLCaptureManager` whose drop stops an
 unfinished capture). The frame count advances across both phases. Preset
 compilation happens before the capture starts so only the recorded frame
-command buffers land in the bundle. `output_size` maps the shared window
-modes to pixels (RetroArch's are points): `Exact` is pixels as given,
-`Scale` multiplies the source size, `Fullscreen` and the default fill use
-`display::Screen`'s backing scale.
+command buffers land in the bundle. The input texture takes the frame's
+format (`BGRA8Unorm` or `BGR10A2Unorm`, re-created on a size or format
+change); the output is `BGRA8Unorm`, or `RGB10A2Unorm` under `--hdr
+hdr10`, RetroArch's HDR10 swapchain format, and every frame renders
+with librashader's frame options carrying the HDR uniforms.
+`ImageSource` turns a Radiance file into a `Bgr10a2` frame through the
+shared `hdr` module (PQ under `Hdr10`, sRGB otherwise). The frontend's
+HDR composite pass is not reproduced. `output_size` maps the shared
+window modes to pixels (RetroArch's are points): `Exact` is pixels as
+given, `Scale` multiplies the source size, `Fullscreen` and the
+default fill use `display::Screen`'s backing scale.
 
 `retroarch::runconfig::RunConfig` is the single place RetroArch settings
-are set; `config::WindowMode` is shared by both backends.
+are set; `config::WindowMode` is shared by both backends. The four
+`video_hdr_*` keys are written every run from `config::Hdr`.
 The source tree mirrors the split: shared modules at the top of `src/`,
 everything RetroArch-only under `src/retroarch/`, everything in-process
 under `src/hosted/` behind the feature. `display`

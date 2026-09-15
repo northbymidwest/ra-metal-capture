@@ -7,7 +7,7 @@ pub mod render;
 pub mod state;
 
 use crate::backend::{Backend, Request, Source, StateSource};
-use crate::config::{self, Size};
+use crate::config::{self, Hdr, Size};
 use crate::layout::{DirResolver, Located, describe_tried, settle_frames};
 use crate::{bundle, display, image_file, interrupt, preset};
 use anyhow::{Context, Result, bail};
@@ -52,6 +52,7 @@ impl Backend for Hosted {
             params,
             window,
             aspect,
+            hdr,
             frames,
             settle,
             advance,
@@ -98,7 +99,7 @@ impl Backend for Hosted {
             match source {
                 Source::Image(image) => {
                     validate_image(&image)?;
-                    (Box::new(render::ImageSource::open(&image)?), 0, None)
+                    (Box::new(render::ImageSource::open(&image, &hdr)?), 0, None)
                 }
                 Source::Core {
                     core,
@@ -124,6 +125,7 @@ impl Backend for Hosted {
                         settle,
                         advance,
                         verbose,
+                        hdr,
                     };
                     // A hosted core may print to stdout; keep that off the stream
                     // this tool reports the output path on.
@@ -138,6 +140,7 @@ impl Backend for Hosted {
             preset,
             window,
             aspect,
+            hdr,
             screen,
             warmup,
             frames,
@@ -188,6 +191,7 @@ struct CoreRun {
     settle: f64,
     advance: u32,
     verbose: bool,
+    hdr: Hdr,
 }
 
 /// Open the core, check the ROM against it, find and decode the state,
@@ -242,6 +246,7 @@ fn boot_core(run: CoreRun, dirs: &mut DirResolver) -> Result<(CoreWithTemp, u32)
         system_dir: run.system_dir,
         save_dir: tmp.path().to_path_buf(),
         options: run.options,
+        hdr: run.hdr,
     })?;
     let av = core.load_game(&run.rom, &info)?;
     if run.verbose {
@@ -283,6 +288,9 @@ impl render::FrameSource for CoreWithTemp {
     }
     fn aspect_ratio(&self) -> f64 {
         self.core.aspect_ratio()
+    }
+    fn format(&self) -> render::FrameFormat {
+        self.core.format()
     }
     fn next(&mut self) -> Result<&render::Frame> {
         self.core.next()
@@ -331,6 +339,7 @@ mod tests {
             params: vec![],
             window: WindowMode::Fullscreen,
             aspect: config::Aspect::Native,
+            hdr: config::Hdr::default(),
             frames: 1,
             settle: 5.0,
             advance: 1,

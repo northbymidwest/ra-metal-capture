@@ -3,7 +3,7 @@
 //! RetroArch fills everything else from its compiled defaults, so the
 //! user's own config is never read for the run and never written.
 
-use crate::config::{Aspect, WindowMode};
+use crate::config::{Aspect, Hdr, WindowMode};
 use crate::state::StateDirs;
 use anyhow::{Result, bail};
 use std::path::{Path, PathBuf};
@@ -55,6 +55,11 @@ pub struct RunConfig {
     /// Whether this run loads a static image through RetroArch's built-in
     /// image viewer core rather than a game core.
     pub image_viewer: bool,
+    /// RetroArch's HDR settings, written every run so the run config is
+    /// their only source. `video_hdr_mode` 0 or 1 gates a core's HDR10
+    /// request in RetroArch exactly as `--hdr` gates it in the hosted
+    /// backend; the Vulkan driver does everything else.
+    pub hdr: Hdr,
 }
 
 impl RunConfig {
@@ -103,6 +108,16 @@ impl RunConfig {
             ("menu_show_load_content_animation", "false".into()),
             ("video_font_enable", "false".into()),
             ("video_force_aspect", "true".into()),
+            ("video_hdr_mode", self.hdr.mode.as_u32().to_string()),
+            (
+                "video_hdr_paper_white_nits",
+                format!("{:.6}", self.hdr.paper_white_nits),
+            ),
+            ("video_hdr_max_nits", format!("{:.6}", self.hdr.max_nits)),
+            (
+                "video_hdr_expand_gamut",
+                self.hdr.expand_gamut.as_u32().to_string(),
+            ),
         ];
         // RetroArch's `enum aspect_ratio`: ASPECT_RATIO_CONFIG is 20,
         // ASPECT_RATIO_CORE is 22 (gfx/video_defines.h at 1.22).
@@ -167,7 +182,7 @@ impl RunConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Aspect, Size};
+    use crate::config::{Aspect, Gamut, Hdr, HdrMode, Size};
 
     #[test]
     fn config_safe_rejects_quotes_and_newlines() {
@@ -199,6 +214,10 @@ pause_nonactive = \"false\"\n\
 menu_show_load_content_animation = \"false\"\n\
 video_font_enable = \"false\"\n\
 video_force_aspect = \"true\"\n\
+video_hdr_mode = \"0\"\n\
+video_hdr_paper_white_nits = \"200.000000\"\n\
+video_hdr_max_nits = \"1000.000000\"\n\
+video_hdr_expand_gamut = \"0\"\n\
 aspect_ratio_index = \"22\"\n";
 
     fn base(window: WindowMode) -> RunConfig {
@@ -210,6 +229,7 @@ aspect_ratio_index = \"22\"\n";
             core_options: PathBuf::from("/tmp/x/core-options.cfg"),
             paused: None,
             image_viewer: false,
+            hdr: Hdr::default(),
         }
     }
 
@@ -284,6 +304,32 @@ video_fullscreen_y = \"0\"\n"
     #[test]
     fn render_fullscreen_adds_nothing() {
         assert_eq!(base(WindowMode::Fullscreen).render().unwrap(), COMMON);
+    }
+
+    #[test]
+    fn render_hdr10_writes_the_four_settings() {
+        let mut cfg = base(WindowMode::Fullscreen);
+        cfg.hdr = Hdr {
+            mode: HdrMode::Hdr10,
+            paper_white_nits: 300.0,
+            max_nits: 800.0,
+            expand_gamut: Gamut::Wide,
+        };
+        let expected = COMMON
+            .replace("video_hdr_mode = \"0\"\n", "video_hdr_mode = \"1\"\n")
+            .replace(
+                "video_hdr_paper_white_nits = \"200.000000\"\n",
+                "video_hdr_paper_white_nits = \"300.000000\"\n",
+            )
+            .replace(
+                "video_hdr_max_nits = \"1000.000000\"\n",
+                "video_hdr_max_nits = \"800.000000\"\n",
+            )
+            .replace(
+                "video_hdr_expand_gamut = \"0\"\n",
+                "video_hdr_expand_gamut = \"2\"\n",
+            );
+        assert_eq!(cfg.render().unwrap(), expected);
     }
 
     #[test]

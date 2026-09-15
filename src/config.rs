@@ -135,6 +135,81 @@ pub enum WindowMode {
     Fullscreen,
 }
 
+/// RetroArch's HDR output mode (`video_hdr_mode`), shared by both
+/// backends. scRGB, RetroArch's 2, is not offered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HdrMode {
+    /// SDR output; a core asking for HDR10 is refused, as RetroArch
+    /// refuses it with HDR off.
+    #[default]
+    Off,
+    /// A 10-bit PQ output; a core may select `HDR10_2101010`.
+    Hdr10,
+}
+
+impl HdrMode {
+    /// RetroArch's `video_hdr_mode` value, also what a core's
+    /// `GET_HDR_OUTPUT_MODE` query is answered with.
+    pub fn as_u32(self) -> u32 {
+        match self {
+            HdrMode::Off => 0,
+            HdrMode::Hdr10 => 1,
+        }
+    }
+}
+
+/// RetroArch's gamut treatment of SDR content under HDR output
+/// (`video_hdr_expand_gamut`, its "Colour Boost" menu entry).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Gamut {
+    /// A proper Rec.709 to Rec.2020 conversion, no boost.
+    #[default]
+    Accurate,
+    /// Rec.709 to a slightly wider space.
+    Expanded,
+    /// Rec.709 to DCI-P3.
+    Wide,
+    /// No rotation; the display reads Rec.709 values as Rec.2020.
+    Super,
+}
+
+impl Gamut {
+    /// RetroArch's setting value, also what `GET_HDR_EXPAND_GAMUT` answers.
+    pub fn as_u32(self) -> u32 {
+        match self {
+            Gamut::Accurate => 0,
+            Gamut::Expanded => 1,
+            Gamut::Wide => 2,
+            Gamut::Super => 3,
+        }
+    }
+}
+
+/// The HDR settings a run carries: RetroArch's four, with RetroArch's
+/// defaults. The RetroArch backend writes them into its run config; the
+/// hosted backend answers a core's queries from them, gates the HDR10
+/// pixel format on `mode`, and passes them to the preset.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Hdr {
+    pub mode: HdrMode,
+    /// The luminance SDR white is shown at (`video_hdr_paper_white_nits`).
+    pub paper_white_nits: f32,
+    /// The display peak (`video_hdr_max_nits`).
+    pub max_nits: f32,
+    pub expand_gamut: Gamut,
+}
+
+impl Default for Hdr {
+    fn default() -> Self {
+        Hdr {
+            mode: HdrMode::Off,
+            paper_white_nits: 200.0,
+            max_nits: 1000.0,
+            expand_gamut: Gamut::Accurate,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,5 +297,20 @@ mod tests {
         assert_eq!(tilde("/abs"), PathBuf::from("/abs"));
         assert_eq!(tilde("rel/~x"), PathBuf::from("rel/~x"));
         assert_eq!(tilde("~x/y"), PathBuf::from("~x/y"));
+    }
+
+    #[test]
+    fn hdr_values_are_retroarchs() {
+        assert_eq!(HdrMode::Off.as_u32(), 0);
+        assert_eq!(HdrMode::Hdr10.as_u32(), 1);
+        assert_eq!(Gamut::Accurate.as_u32(), 0);
+        assert_eq!(Gamut::Expanded.as_u32(), 1);
+        assert_eq!(Gamut::Wide.as_u32(), 2);
+        assert_eq!(Gamut::Super.as_u32(), 3);
+        let d = Hdr::default();
+        assert_eq!(d.mode, HdrMode::Off);
+        assert_eq!(d.paper_white_nits, 200.0);
+        assert_eq!(d.max_nits, 1000.0);
+        assert_eq!(d.expand_gamut, Gamut::Accurate);
     }
 }

@@ -175,6 +175,7 @@ impl Backend for RetroArch {
             core_options,
             paused: paused.clone(),
             image_viewer: matches!(request.source, Source::Image(_)),
+            hdr: request.hdr,
         };
         let rendered = run_config.render()?;
         let config_path = tmp.path().join("retroarch.cfg");
@@ -257,6 +258,7 @@ mod tests {
             params: vec![],
             window: WindowMode::Fullscreen,
             aspect: crate::config::Aspect::Native,
+            hdr: crate::config::Hdr::default(),
             frames: 1,
             settle: 5.0,
             advance: 1,

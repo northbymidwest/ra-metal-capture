@@ -7,9 +7,9 @@
 //! and any indexing that is not proved in range first, and they recover
 //! from a poisoned lock rather than panicking on it.
 
-use super::pixels::{PixelFormat, to_bgra};
+use super::pixels::{PixelFormat, to_frame};
 use super::sys;
-use crate::config::Size;
+use crate::config::{Hdr, HdrMode, Size};
 use crate::hosted::render::Frame;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_uint, c_void};
@@ -39,6 +39,9 @@ pub struct Shared {
     /// registered key must never come back null.
     pub defaults: HashMap<String, CString>,
     pub pixel_format: PixelFormat,
+    /// The run's HDR settings: gate the HDR10 pixel format and answer
+    /// the HDR queries.
+    pub hdr: Hdr,
     pub asked_for_hw_render: bool,
     pub frame: Option<Frame>,
     /// The latest geometry the core announced, taken by `Core::next`.
@@ -56,6 +59,7 @@ impl Default for Shared {
             // libretro's default when a core never sets one. `PixelFormat`
             // is a foreign type, so it cannot carry its own `Default`.
             pixel_format: PixelFormat::Xrgb1555,
+            hdr: Hdr::default(),
             asked_for_hw_render: false,
             frame: None,
             geometry: None,
@@ -71,14 +75,6 @@ pub fn shared() -> MutexGuard<'static, Shared> {
     SHARED.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Bytes per pixel in a core's framebuffer for each format `to_bgra` reads.
-fn bytes_per_pixel(format: PixelFormat) -> usize {
-    match format {
-        PixelFormat::Xrgb8888 => 4,
-        PixelFormat::Rgb565 | PixelFormat::Xrgb1555 => 2,
-    }
-}
-
 /// The core-options API version this frontend implements, answered to
 /// `GET_CORE_OPTIONS_VERSION`; a core then registers with the v2 form.
 const CORE_OPTIONS_VERSION: c_uint = 2;
@@ -91,6 +87,13 @@ const GET_INPUT_BITMASKS: c_uint = sys::RETRO_ENVIRONMENT_GET_INPUT_BITMASKS & !
 const SET_MEMORY_MAPS: c_uint = sys::RETRO_ENVIRONMENT_SET_MEMORY_MAPS & !EXPERIMENTAL;
 const SET_SUPPORT_ACHIEVEMENTS: c_uint =
     sys::RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS & !EXPERIMENTAL;
+const GET_SCREEN_10BPC_CAPABLE: c_uint =
+    sys::RETRO_ENVIRONMENT_GET_SCREEN_10BPC_CAPABLE & !EXPERIMENTAL;
+const GET_HDR_PAPER_WHITE_NITS: c_uint =
+    sys::RETRO_ENVIRONMENT_GET_HDR_PAPER_WHITE_NITS & !EXPERIMENTAL;
+const GET_HDR_EXPAND_GAMUT: c_uint = sys::RETRO_ENVIRONMENT_GET_HDR_EXPAND_GAMUT & !EXPERIMENTAL;
+const GET_HDR_OUTPUT_MODE: c_uint = sys::RETRO_ENVIRONMENT_GET_HDR_OUTPUT_MODE & !EXPERIMENTAL;
+const GET_HDR_MAX_NITS: c_uint = sys::RETRO_ENVIRONMENT_GET_HDR_MAX_NITS & !EXPERIMENTAL;
 /// `RETRO_NUM_CORE_OPTION_VALUES_MAX` as a length.
 const NUM_CORE_OPTION_VALUES_MAX: usize = sys::RETRO_NUM_CORE_OPTION_VALUES_MAX as usize;
 
@@ -277,8 +280,12 @@ pub unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
                 }
                 None => false,
             },
+            // XRGB2101010 is accepted always, HDR10 only under `--hdr
+            // hdr10`: RetroArch's gate, and libretro.h says a frontend
+            // that cannot present HDR10 must refuse rather than convert.
             sys::RETRO_ENVIRONMENT_SET_PIXEL_FORMAT => {
                 match PixelFormat::from_raw(*(data as *const c_uint)) {
+                    Some(PixelFormat::Hdr10) if s.hdr.mode != HdrMode::Hdr10 => false,
                     Some(format) => {
                         s.pixel_format = format;
                         true
@@ -335,6 +342,28 @@ pub unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
             // Every input reads as neutral, as a bitmask too, so a core
             // may read all buttons in one call.
             GET_INPUT_BITMASKS => true,
+            // The HDR queries, answered whatever the mode, as RetroArch
+            // does. The input texture is 10-bit here, so 10bpc is real.
+            GET_SCREEN_10BPC_CAPABLE => {
+                *(data as *mut bool) = true;
+                true
+            }
+            GET_HDR_OUTPUT_MODE => {
+                *(data as *mut c_uint) = s.hdr.mode.as_u32();
+                true
+            }
+            GET_HDR_EXPAND_GAMUT => {
+                *(data as *mut c_uint) = s.hdr.expand_gamut.as_u32();
+                true
+            }
+            GET_HDR_PAPER_WHITE_NITS => {
+                *(data as *mut f32) = s.hdr.paper_white_nits;
+                true
+            }
+            GET_HDR_MAX_NITS => {
+                *(data as *mut f32) = s.hdr.max_nits;
+                true
+            }
             sys::RETRO_ENVIRONMENT_GET_LANGUAGE => {
                 *(data as *mut c_uint) = sys::retro_language::RETRO_LANGUAGE_ENGLISH as c_uint;
                 true
@@ -384,9 +413,10 @@ pub unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
     }
 }
 
-/// Copy the core's framebuffer out as BGRA8 before the call returns.
+/// Copy the core's framebuffer out as a frame in its format before the
+/// call returns.
 ///
-/// A frame whose geometry `to_bgra` could not read in bounds (a row of
+/// A frame whose geometry `to_frame` could not read in bounds (a row of
 /// `width` pixels wider than `pitch`, or a buffer whose length overflows)
 /// is dropped rather than converted, so the caller sees no frame instead
 /// of a panic unwinding into the core.
@@ -412,11 +442,11 @@ pub unsafe extern "C" fn video_refresh(
         s.frame = None;
         return;
     }
-    // `to_bgra` reads `width * bytes_per_pixel` bytes from each row and
+    // `to_frame` reads `width * bytes_per_pixel` bytes from each row and
     // indexes rows by `pitch`; both must be in range for every row. The
     // buffer a core owns ends with the last row's pixels, not its padding,
     // so the slice covers `(rows - 1) * pitch + row_bytes` bytes.
-    let row_bytes = (width as usize).checked_mul(bytes_per_pixel(s.pixel_format));
+    let row_bytes = (width as usize).checked_mul(s.pixel_format.bytes_per_pixel());
     let total = row_bytes.and_then(|rb| (rows - 1).checked_mul(pitch)?.checked_add(rb));
     let (Some(row_bytes), Some(total)) = (row_bytes, total) else {
         s.frame = None;
@@ -432,11 +462,7 @@ pub unsafe extern "C" fn video_refresh(
     // duration of this call. The slice is only read here and is dropped
     // before returning, so no pointer of the core's escapes.
     let bytes = unsafe { std::slice::from_raw_parts(data as *const u8, total) };
-    let bgra = to_bgra(s.pixel_format, bytes, width, height, pitch);
-    s.frame = Some(Frame {
-        size: Size { width, height },
-        bgra,
-    });
+    s.frame = Some(to_frame(s.pixel_format, bytes, width, height, pitch));
 }
 
 /// Audio is not recorded; a sample is dropped.
@@ -479,6 +505,8 @@ pub unsafe extern "C" fn input_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{Gamut, Hdr, HdrMode};
+    use crate::hosted::render::FrameFormat;
     use std::ffi::CString;
     use std::sync::{Mutex, MutexGuard};
 
@@ -911,12 +939,13 @@ mod tests {
     }
 
     #[test]
-    fn pixel_format_maps_the_three_known_values_and_refuses_others() {
+    fn pixel_format_accepts_ten_bit_sdr_and_gates_hdr10_on_the_mode() {
         let _g = fresh();
         for (raw, want) in [
             (0u32, PixelFormat::Xrgb1555),
             (1, PixelFormat::Xrgb8888),
             (2, PixelFormat::Rgb565),
+            (3, PixelFormat::Xrgb2101010),
         ] {
             let mut v = raw;
             assert!(env(
@@ -925,12 +954,76 @@ mod tests {
             ));
             assert_eq!(shared().pixel_format, want);
         }
+        let mut v = 4u32;
+        assert!(
+            !env(
+                sys::RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,
+                &mut v as *mut c_uint as *mut c_void
+            ),
+            "HDR10 is refused while HDR output is off"
+        );
+        assert_eq!(shared().pixel_format, PixelFormat::Xrgb2101010, "unchanged");
         let mut v = 7u32;
         assert!(!env(
             sys::RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,
             &mut v as *mut c_uint as *mut c_void
         ));
-        assert_eq!(shared().pixel_format, PixelFormat::Rgb565, "unchanged");
+        shared().hdr.mode = HdrMode::Hdr10;
+        let mut v = 4u32;
+        assert!(env(
+            sys::RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,
+            &mut v as *mut c_uint as *mut c_void
+        ));
+        assert_eq!(shared().pixel_format, PixelFormat::Hdr10);
+    }
+
+    #[test]
+    fn hdr_queries_answer_the_configured_values() {
+        let _g = fresh();
+        shared().hdr = Hdr {
+            mode: HdrMode::Hdr10,
+            paper_white_nits: 300.0,
+            max_nits: 800.0,
+            expand_gamut: Gamut::Wide,
+        };
+        let mut capable = false;
+        assert!(env(
+            sys::RETRO_ENVIRONMENT_GET_SCREEN_10BPC_CAPABLE,
+            &mut capable as *mut bool as *mut c_void
+        ));
+        assert!(capable);
+        let mut mode = 9u32;
+        assert!(env(
+            sys::RETRO_ENVIRONMENT_GET_HDR_OUTPUT_MODE,
+            &mut mode as *mut c_uint as *mut c_void
+        ));
+        assert_eq!(mode, 1);
+        let mut gamut = 9u32;
+        assert!(env(
+            sys::RETRO_ENVIRONMENT_GET_HDR_EXPAND_GAMUT,
+            &mut gamut as *mut c_uint as *mut c_void
+        ));
+        assert_eq!(gamut, 2);
+        let mut white = 0f32;
+        assert!(env(
+            sys::RETRO_ENVIRONMENT_GET_HDR_PAPER_WHITE_NITS,
+            &mut white as *mut f32 as *mut c_void
+        ));
+        assert_eq!(white, 300.0);
+        let mut peak = 0f32;
+        assert!(env(
+            sys::RETRO_ENVIRONMENT_GET_HDR_MAX_NITS,
+            &mut peak as *mut f32 as *mut c_void
+        ));
+        assert_eq!(peak, 800.0);
+        // Answered whatever the mode, as RetroArch answers them.
+        shared().hdr.mode = HdrMode::Off;
+        let mut mode = 9u32;
+        assert!(env(
+            sys::RETRO_ENVIRONMENT_GET_HDR_OUTPUT_MODE,
+            &mut mode as *mut c_uint as *mut c_void
+        ));
+        assert_eq!(mode, 0);
     }
 
     #[test]
@@ -963,8 +1056,9 @@ mod tests {
                 height: 2
             }
         );
+        assert_eq!(frame.format, FrameFormat::Bgra8);
         assert_eq!(
-            frame.bgra,
+            frame.pixels,
             [1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255, 10, 11, 12, 255]
         );
     }

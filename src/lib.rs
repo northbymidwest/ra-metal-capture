@@ -38,6 +38,7 @@ pub mod backend;
 pub mod bundle;
 pub mod config;
 pub mod display;
+pub mod hdr;
 #[cfg(feature = "librashader")]
 pub mod hosted;
 pub mod image_file;

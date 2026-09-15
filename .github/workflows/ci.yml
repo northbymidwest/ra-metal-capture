@@ -117,6 +117,13 @@ jobs:
       - run: cargo build
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+      # The image viewer core: a workspace member a plain `cargo build`
+      # never touches (the root package is the default member). It
+      # depends on the root with default features, so this reuses the
+      # build above.
+      - run: cargo build -p hdr-image-core
+      - run: cargo clippy -p hdr-image-core --all-targets -- -D warnings
+      - run: cargo test -p hdr-image-core
       # The RetroArch-only shape must keep building and testing without the
       # librashader feature (and its C++ dependencies).
       - run: cargo build --no-default-features

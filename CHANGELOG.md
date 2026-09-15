@@ -2,6 +2,34 @@
 
 Notable changes per release. Dates are the publish date.
 
+## Unreleased
+
+### Added
+
+- `--hdr hdr10`, with `--hdr-paper-white`, `--hdr-max-nits`, and
+  `--hdr-gamut`: RetroArch's HDR settings, applied to both backends. The
+  hosted backend renders into a 10-bit PQ output with librashader's HDR
+  uniforms set; the RetroArch backend writes the settings into its run
+  config (a RetroArch newer than July 2026 honours them; 1.22.x ignores
+  them).
+- A Radiance `.hdr` image given to `--image` is a 10-bit source: PQ
+  under `--hdr hdr10`, sRGB otherwise, encoded as RetroArch's HDR shader
+  would. PNG and JPEG stay 8-bit.
+- The hosted backend accepts libretro's `XRGB2101010` pixel format under
+  either setting and `HDR10_2101010` under `--hdr hdr10`, uploading both
+  unconverted into a 10-bit input texture, as RetroArch's Metal driver
+  does for 10-bit SDR and its Vulkan driver for HDR10. Without `--hdr`,
+  HDR10 is refused as RetroArch refuses it. The five HDR environment
+  queries are answered from the settings.
+- `hdr-image-core`, a workspace member building a Rust libretro core
+  whose content files are images, emitting HDR10, 10-bit SDR, or 8-bit
+  frames as the frontend allows; loadable by both backends and by
+  RetroArch.
+- `fixtures/sample.hdr`, the sample scene as a Radiance image with the
+  sun at eight times paper white, written by `scripts/gen-sample.py`
+  alongside the PNG; `fixtures/probe.hdr` is the 4x4 image the tests
+  check exact values against.
+
 ## 0.7.1 - 2026-09-14
 
 ### Changed

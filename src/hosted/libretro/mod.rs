@@ -1,5 +1,5 @@
 //! Hosting a libretro core in this process: loading the dylib, answering
-//! its environment queries, and turning each `retro_run` into a BGRA8
+//! its environment queries, and turning each `retro_run` into a
 //! frame for the render module. The libretro ABI carries no user pointer,
 //! so the callbacks' state lives in process-wide statics (`env`), and one
 //! `Core` per process is enforced. This module and `render` are the only
@@ -9,11 +9,19 @@
 
 mod env;
 pub(crate) mod pixels;
-mod sys;
+/// libretro's types and constants, for the `hdr-image-core` crate; not
+/// API, and regenerated with every header update. Doc-hidden, but no
+/// longer private, so rustdoc still resolves its doc comments' intra-doc
+/// links; libretro.h's own cross-references (`retro_set_input_poll()`
+/// and the like) point at functions this module does not itself declare,
+/// so that lint is off for it.
+#[doc(hidden)]
+#[allow(rustdoc::broken_intra_doc_links)]
+pub mod sys;
 
-pub use crate::hosted::render::Frame;
+pub use crate::hosted::render::{Frame, FrameFormat};
 
-use crate::config::Size;
+use crate::config::{Hdr, Size};
 use anyhow::{Context as _, Result, bail};
 use libloading::Library;
 use std::collections::HashMap;
@@ -29,6 +37,9 @@ pub struct Context {
     pub save_dir: PathBuf,
     /// Core options, key to value, from RetroArch's per-core `.opt` file.
     pub options: HashMap<String, String>,
+    /// The run's HDR settings, which gate a core's HDR10 request and
+    /// answer its HDR queries.
+    pub hdr: Hdr,
 }
 
 /// `retro_get_system_info`, the parts this tool uses.
@@ -278,7 +289,8 @@ impl Core {
                     width: 0,
                     height: 0,
                 },
-                bgra: Vec::new(),
+                format: FrameFormat::Bgra8,
+                pixels: Vec::new(),
             },
         })
     }
@@ -300,6 +312,7 @@ impl Core {
             s.system_dir = Some(system_dir);
             s.save_dir = Some(save_dir);
             s.options = options;
+            s.hdr = ctx.hdr;
         }
         // SAFETY: the libretro contract: every callback is set before
         // retro_init, each with the signature libretro.h declares for it,
@@ -514,6 +527,9 @@ impl crate::hosted::render::FrameSource for Core {
         } else {
             crate::hosted::render::pixel_aspect(self.base)
         }
+    }
+    fn format(&self) -> FrameFormat {
+        env::shared().pixel_format.frame_format()
     }
     fn next(&mut self) -> Result<&Frame> {
         let frame = self.run_frame()?;

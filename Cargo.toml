@@ -25,6 +25,8 @@ exclude = [
     # src/hosted/libretro/sys.rs; the generated file is what ships.
     "/third_party/",
     "/xtask/",
+    # The image viewer core used for verification; not part of the crate.
+    "/hdr-image-core/",
     "/.cargo/",
 ]
 
@@ -59,7 +61,7 @@ librashader = [
 # this lockfile and the supply-chain checks; it is never built by a plain
 # `cargo build` here, since the root package is the default member.
 [workspace]
-members = ["xtask"]
+members = ["xtask", "hdr-image-core"]
 
 [lib]
 name = "ra_metal_capture"

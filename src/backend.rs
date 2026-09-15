@@ -4,7 +4,7 @@
 //! backend needs beyond the request (the RetroArch app to launch, say) is
 //! the backend's own state.
 
-use crate::config::{Aspect, WindowMode};
+use crate::config::{Aspect, Hdr, WindowMode};
 use crate::preset::Param;
 use anyhow::Result;
 use std::path::PathBuf;
@@ -49,6 +49,11 @@ pub struct Request {
     pub window: WindowMode,
     /// The viewport's aspect ratio; `Native` is the source's own.
     pub aspect: Aspect,
+    /// HDR output mode and settings; `Off` by default. The RetroArch
+    /// backend writes them into its run config, the hosted backend gates
+    /// a core's HDR10 request on the mode and feeds the rest to the core
+    /// and the preset.
+    pub hdr: Hdr,
     /// Frames to record.
     pub frames: u32,
     /// Seconds to run (or wait) before recording when there is no state.
